@@ -42,6 +42,9 @@ else app.whenReady().then(async () => {
   `);
 
   database.exec(`
+    CREATE TABLE IF NOT EXISTS application_preferences (
+      key TEXT PRIMARY KEY, value TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS reading_positions (
       book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
       position TEXT NOT NULL
@@ -73,8 +76,8 @@ else app.whenReady().then(async () => {
     );
   `);
 
-  if (database.prepare('PRAGMA user_version').get().user_version < 6) {
-    database.exec('PRAGMA user_version = 6');
+  if (database.prepare('PRAGMA user_version').get().user_version < 7) {
+    database.exec('PRAGMA user_version = 7');
   }
 
   function register(channel, operation) {
@@ -201,6 +204,26 @@ else app.whenReady().then(async () => {
       ON CONFLICT(book_id) DO UPDATE SET position = excluded.position
     `).run(id, position);
   });
+  const preferenceKeys = new Set([
+    'reading-appearance', 'listening-preferences', 'interface-language', 'library-sort',
+    'resume-on-start', 'open-after-import', 'translation-target', 'page-turning',
+    'epub-reading-mode', 'pdf-reading-mode', 'txt-reading-mode'
+  ]);
+  register('preferences:list', () => database.prepare('SELECT key, value FROM application_preferences').all());
+  register('preferences:save', (key, value) => {
+    if (!preferenceKeys.has(key) || (value !== null && (typeof value !== 'string' || value.length > 4096))) {
+      throw new Error('无效的设置数据');
+    }
+    if (value === null) {
+      database.prepare('DELETE FROM application_preferences WHERE key = ?').run(key);
+      return;
+    }
+    database.prepare(`
+      INSERT INTO application_preferences (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(key, value);
+  });
+
   register('data:export', async (preferences) => {
     if (typeof preferences !== 'string' || preferences.length > 16384) throw new Error('无效的设置数据');
     const exportData = {

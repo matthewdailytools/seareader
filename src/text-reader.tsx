@@ -1,3 +1,4 @@
+import { savePreference } from './preferences';
 import { loadPageTurning, pageKeyDelta } from './page-turning';
 import { useTranslation } from './locale';
 import { OcrPanel } from './ocr-panel';
@@ -238,7 +239,7 @@ export function TextReader({ preview, bytes, id, initialPosition, appearance, ti
     <div className="reader-controls">
       <label>{tr('阅读方式', 'Reading mode', '閲覧モード')} <select value={paged ? 'page' : 'scroll'} onChange={event => {
         setPaged(event.target.value === 'page');
-        localStorage.setItem('txt-reading-mode', event.target.value);
+        savePreference('txt-reading-mode', event.target.value);
       }}>
         <option value="page">{tr('左右翻页', 'Pages', 'ページ送り')}</option>
         <option value="scroll">{tr('上下滚动', 'Continuous scroll', '連続スクロール')}</option>

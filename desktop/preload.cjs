@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('seaReader', {
   saveListeningPosition: (source, part) => ipcRenderer.invoke('listening:save', source, part),
   getPosition: (id) => ipcRenderer.invoke('positions:get', id),
   savePosition: (id, position) => ipcRenderer.invoke('positions:save', id, position),
+  listPreferences: () => ipcRenderer.invoke('preferences:list'),
+  savePreference: (name, value) => ipcRenderer.invoke('preferences:save', name, value),
   exportData: (preferences) => ipcRenderer.invoke('data:export', JSON.stringify(preferences)),
   listFeeds: () => ipcRenderer.invoke('feeds:list'),
   fetchFeed: (url) => ipcRenderer.invoke('feeds:fetch', url),

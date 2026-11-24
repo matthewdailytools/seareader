@@ -1,3 +1,4 @@
+import { savePreference } from './preferences';
 import { formatOperationError, useTranslation, detectTextLanguage } from './locale';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -68,7 +69,7 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
   function updatePreferences(value: ListeningPreferences) {
     setPreferences(value);
     setRate(value.rate);
-    localStorage.setItem('listening-preferences', JSON.stringify(value));
+    savePreference('listening-preferences', JSON.stringify(value));
   }
   const [error, setError] = useState('');
 

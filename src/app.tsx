@@ -1,3 +1,4 @@
+import { hydratePreferences, savePreference } from './preferences';
 import { defaultPageTurning, loadPageTurning } from './page-turning';
 import { BookCover } from './book-cover';
 import { formatOperationError, LocaleContext, loadLocalePreference, resolveLocale, translator, loadTranslationTarget, type LocalePreference, type TextLanguage } from './locale';
@@ -37,6 +38,8 @@ declare global {
       saveListeningPosition(source: string, part: number): Promise<void>;
       getPosition(id: string): Promise<string | null>;
       savePosition(id: string, position: string): Promise<void>;
+      listPreferences(): Promise<{ key: string; value: string }[]>;
+      savePreference(key: string, value: string | null): Promise<void>;
       exportData(preferences: object): Promise<boolean>;
       listFeeds(): Promise<SavedFeed[]>;
       fetchFeed(url: string): Promise<{ url: string; xml: string }>;
@@ -74,7 +77,7 @@ function App({ localePreference, setLocalePreference }: {
   const tr = translator(resolveLocale(localePreference));
   const [pageTurning, setPageTurning] = useState(loadPageTurning);
   useEffect(() => {
-    localStorage.setItem('page-turning', JSON.stringify(pageTurning));
+    savePreference('page-turning', JSON.stringify(pageTurning));
   }, [pageTurning]);
   const [translationTarget, setTranslationTarget] = useState(loadTranslationTarget);
   const [appearance, setAppearance] = useState(loadAppearance);
@@ -105,7 +108,7 @@ function App({ localePreference, setLocalePreference }: {
 
   useEffect(() => {
     document.documentElement.dataset.theme = appearance.theme;
-    localStorage.setItem('reading-appearance', JSON.stringify(appearance));
+    savePreference('reading-appearance', JSON.stringify(appearance));
   }, [appearance]);
 
   useEffect(() => {
@@ -169,7 +172,7 @@ function App({ localePreference, setLocalePreference }: {
 
   function changeSort(value: 'recent' | 'title' | 'format') {
     setSort(value);
-    localStorage.setItem('library-sort', value);
+    savePreference('library-sort', value);
   }
 
   async function changeDownloadNetwork(mode: 'any' | 'wifi') {
@@ -297,7 +300,7 @@ function App({ localePreference, setLocalePreference }: {
       <p><label>{tr('默认翻译目标语言', 'Default translation target', '既定の翻訳先言語')}
         <select value={translationTarget} onChange={event => {
           const value = event.target.value as TextLanguage | 'interface';
-          localStorage.setItem('translation-target', value);
+          savePreference('translation-target', value);
           setTranslationTarget(value);
         }}>
           <option value="interface">{tr('跟随界面语言', 'Match interface language', '表示言語に合わせる')}</option>
@@ -312,11 +315,11 @@ function App({ localePreference, setLocalePreference }: {
       </select></label></p>
       <p><label><input type="checkbox" checked={resumeOnStart} onChange={event => {
         setResumeOnStart(event.target.checked);
-        localStorage.setItem('resume-on-start', String(event.target.checked));
+        savePreference('resume-on-start', String(event.target.checked));
       }} /> {tr('启动时打开上次阅读', 'Resume on startup', '起動時に前回の本を開く')}</label></p>
       <p><label><input type="checkbox" checked={openAfterImport} onChange={event => {
         setOpenAfterImport(event.target.checked);
-        localStorage.setItem('open-after-import', String(event.target.checked));
+        savePreference('open-after-import', String(event.target.checked));
       }} /> {tr('导入单本后直接打开', 'Open after importing one book', '1冊を取り込んだら開く')}</label></p>
       <p><label >{tr('书库排序', 'Sort library', 'ライブラリの並べ替え')} <select value={sort} onChange={event => {
         const value = event.target.value;
@@ -335,14 +338,14 @@ function App({ localePreference, setLocalePreference }: {
           setLocalePreference('system');
           setTranslationTarget('interface');
           setPageTurning(defaultPageTurning);
-          localStorage.removeItem('translation-target');
+          savePreference('translation-target', null);
           setResumeOnStart(false);
           setOpenAfterImport(false);
-          localStorage.removeItem('resume-on-start');
-          localStorage.removeItem('open-after-import');
-          localStorage.removeItem('epub-reading-mode');
-          localStorage.removeItem('pdf-reading-mode');
-          localStorage.removeItem('txt-reading-mode');
+          savePreference('resume-on-start', null);
+          savePreference('open-after-import', null);
+          savePreference('epub-reading-mode', null);
+          savePreference('pdf-reading-mode', null);
+          savePreference('txt-reading-mode', null);
         }}>{tr('恢复默认偏好', 'Reset preferences', '設定を初期化')}</button>
       </div>
       {exportStatus && <p role="status">{exportStatus}</p>}
@@ -376,7 +379,7 @@ function Root() {
   const locale = resolveLocale(localePreference);
   useEffect(() => {
     document.documentElement.lang = locale;
-    localStorage.setItem('interface-language', localePreference);
+    savePreference('interface-language', localePreference);
   }, [locale, localePreference]);
 
 
@@ -387,4 +390,7 @@ function Root() {
   </LocaleContext.Provider>;
 }
 
-createRoot(document.getElementById('root')!).render(<Root />);
+const root = createRoot(document.getElementById('root')!);
+void hydratePreferences().catch(error => {
+  console.error('Could not load preferences', error);
+}).finally(() => root.render(<Root />));

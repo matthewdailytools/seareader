@@ -1,3 +1,4 @@
+import { savePreference } from './preferences';
 import { loadPageTurning, pageKeyDelta } from './page-turning';
 import { useTranslation } from './locale';
 import { speechParts, useListening } from './listening';
@@ -248,7 +249,7 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
       <button disabled={!ready} onClick={() => void rendition.current?.next()}>{tr('下一页', 'Next page', '次のページ')}</button>
       <label>{tr('阅读方式', 'Reading mode', '閲覧モード')} <select value={continuous ? 'scroll' : 'page'} disabled={!ready} onChange={event => {
         const scrolling = event.target.value === 'scroll';
-        localStorage.setItem('epub-reading-mode', event.target.value);
+        savePreference('epub-reading-mode', event.target.value);
         setReady(false);
         setSelection(undefined);
         setError('');
@@ -544,7 +545,7 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
       <label>{tr('阅读方式', 'Reading mode', '閲覧モード')} <select value={continuous ? 'scroll' : 'page'} onChange={event => {
         const scrolling = event.target.value === 'scroll';
         setContinuous(scrolling);
-        localStorage.setItem('pdf-reading-mode', scrolling ? 'scroll' : 'page');
+        savePreference('pdf-reading-mode', scrolling ? 'scroll' : 'page');
         if (!scrolling && surface.current) surface.current.scrollTop = 0;
       }}>
         <option value="page">{tr('左右翻页', 'Pages', 'ページ送り')}</option><option value="scroll">{tr('上下滚动', 'Continuous scroll', '連続スクロール')}</option>
