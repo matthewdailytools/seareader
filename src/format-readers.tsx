@@ -63,6 +63,11 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
   useEffect(() => {
     const key = 'epub-position:' + id;
     const book = ePub(Uint8Array.from(bytes).buffer);
+    let active = true;
+    function reportOpenFailure() {
+      if (active) setError('无法打开 EPUB。文件可能损坏或受保护。');
+    }
+    book.on('openFailed', reportOpenFailure);
     bookRef.current = book;
     const view = book.renderTo(container.current!, {
       width: '100%', height: '100%', allowScriptedContent: false,
@@ -85,7 +90,6 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
         }
       });
     });
-    let active = true;
     view.on('selected', (position: string, contents: { window: Window }) => {
       const quotation = contents.window.getSelection()?.toString().trim().slice(0, 12000);
       if (active && quotation) setSelection({ position, quotation });
@@ -112,7 +116,7 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
         }
         if (active) setReady(true);
       } catch {
-        if (active) setError('无法打开 EPUB。文件可能损坏或受保护。');
+        reportOpenFailure();
       }
     }
     void open();
@@ -121,6 +125,7 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
     }).catch(() => {});
     return () => {
       active = false;
+      book.off('openFailed', reportOpenFailure);
       rendition.current = null;
       bookRef.current = null;
       book.destroy();
