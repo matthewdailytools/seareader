@@ -1,0 +1,62 @@
+:root { font-family: system-ui, sans-serif; color: #1d3038; background: #f5f7f7; }
+body { margin: 0; }
+main { max-width: 1200px; margin: auto; padding: 0 28px 32px; }
+header { min-height: 68px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #d9e2e4; }
+header strong { font-size: 1.25rem; }
+button, select, input { font: inherit; border: 1px solid #b5c6ca; background: white; color: inherit; border-radius: 8px; padding: 8px 12px; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #167783; outline-offset: 2px; }
+.primary { background: #135b64; color: white; border-color: #135b64; }
+.filters { display: flex; flex-wrap: wrap; gap: 12px; }
+.shelf { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+.shelf button { display: flex; flex-direction: column; text-align: left; justify-content: flex-end; gap: 12px; width: 100%; min-height: 160px; overflow-wrap: anywhere; }
+.shelf span { color: #345e66; font-size: .85rem; }
+.reading { max-width: 760px; margin: auto; }
+article { margin-top: 24px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; }
+[role=alert] { color: #9d2525; white-space: pre-wrap; }
+.reader-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.epub-view { height: calc(100vh - 220px); min-height: 260px; background: white; }
+.pdf-view { overflow: auto; background: #d9e2e4; padding: 12px; }
+.pdf-view canvas { display: block; margin: auto; background: white; }
+.txt-view { position: relative; height: calc(100vh - 220px); min-height: 220px; overflow: auto; }
+.contents { max-height: 230px; overflow: auto; margin-bottom: 12px; }
+.pdf-view { height: max(260px, calc(100vh - 260px)); scrollbar-gutter: stable; }
+.pdf-scroll-track { position: relative; }
+.pdf-scroll-slot { position: absolute; left: 0; right: 0; display: grid; place-items: center; }
+:root { --page: #f5f7f7; --panel: #fff; --ink: #1d3038; --edge: #bac9c8; --well: #d9e2e4; }
+:root[data-theme="sepia"] { --page: #eee0c4; --panel: #f4ead5; --ink: #392f22; --edge: #bcab8b; --well: #ddcfb2; }
+:root[data-theme="dark"] { color-scheme: dark; --page: #142023; --panel: #1d292e; --ink: #e3ebeb; --edge: #4d6569; --well: #25363a; }
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] { color-scheme: dark; --page: #142023; --panel: #1d292e; --ink: #e3ebeb; --edge: #4d6569; --well: #25363a; }
+}
+:root, body { background: var(--page); color: var(--ink); }
+header, button, input, select { border-color: var(--edge); }
+button, input, select, .epub-view, .txt-view { background: var(--panel); }
+.shelf span { color: inherit; opacity: .75; }
+.pdf-view { background: var(--well); }
+.header-actions { display: flex; gap: 8px; }
+::highlight(sea-txt-annotations) { background-color: #edb83066; }
+.pdf-sheet { position: relative; width: max-content; margin: auto; }
+.pdf-marks { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.pdf-marks span { position: absolute; background: #edb83055; }
+.ocr-preview { display: block; max-width: 100%; max-height: 160px; object-fit: contain; }
+.listening-player { position: sticky; bottom: 0; z-index: 5; background: var(--panel); border-top: 1px solid var(--edge); padding: 12px 28px; }
+.txt-paged { overflow: hidden; }
+.shelf .book-cover { display: grid; place-items: center; width: 100%; aspect-ratio: 3 / 4; border-radius: 6px; background: var(--well); overflow: hidden; opacity: 1; }
+.book-cover img { width: 100%; height: 100%; object-fit: contain; }
+.book-cover > span { font-weight: 600; }
+.library-nav { display: none; }
+.workspace-content { min-width: 0; }
+@media (min-width: 880px) {
+  .library-shell { display: grid; grid-template-columns: 174px minmax(0, 1fr); column-gap: 28px; }
+  .library-shell > header { grid-column: 1 / -1; }
+  .library-shell .compact-nav-action { display: none; }
+  .library-nav { display: flex; flex-direction: column; gap: 6px; align-self: start; padding: 18px 14px 0 0; border-right: 1px solid var(--edge); }
+  .library-nav button { text-align: left; border-color: transparent; background: transparent; }
+  .library-nav [aria-current="page"] { background: var(--well); font-weight: 600; }
+  .library-nav button:hover { border-color: var(--edge); }
+}
+@media (max-width: 580px) {
+  main { padding-inline: 14px; }
+  .header-actions { justify-content: end; flex-wrap: wrap; padding-block: 8px; }
+}

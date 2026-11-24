@@ -1,0 +1,51 @@
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
+
+contextBridge.exposeInMainWorld('seaReader', {
+  translate: (id, source, target, text, install) => ipcRenderer.invoke('translation:run', id, source, target, text, install),
+  cancelTranslation: (id) => ipcRenderer.invoke('translation:cancel', id),
+  recognizeImage: (jobId, image, language) => ipcRenderer.invoke('ocr:recognize', jobId, image, language),
+  cancelRecognition: (jobId) => ipcRenderer.invoke('ocr:cancel', jobId),
+  listRecognizedPages: (id) => ipcRenderer.invoke('ocr:list', id),
+  saveRecognizedPage: (id, page, text) => ipcRenderer.invoke('ocr:save', id, page, text),
+  listAnnotations: (id) => ipcRenderer.invoke('annotations:list', id),
+  saveAnnotation: (id, position, quotation, note) => ipcRenderer.invoke('annotations:save', id, position, quotation, note),
+  removeAnnotation: (id, annotationId) => ipcRenderer.invoke('annotations:remove', id, annotationId),
+  listBookmarks: (id) => ipcRenderer.invoke('bookmarks:list', id),
+  addBookmark: (id) => ipcRenderer.invoke('bookmarks:add', id),
+  removeBookmark: (id, bookmarkId) => ipcRenderer.invoke('bookmarks:remove', id, bookmarkId),
+  generateSpeech: (id, text, language) => ipcRenderer.invoke('speech:generate', id, text, language),
+  cancelSpeech: (id) => ipcRenderer.invoke('speech:cancel', id),
+  getListeningPosition: (source) => ipcRenderer.invoke('listening:get', source),
+  saveListeningPosition: (source, part) => ipcRenderer.invoke('listening:save', source, part),
+  getPosition: (id) => ipcRenderer.invoke('positions:get', id),
+  savePosition: (id, position) => ipcRenderer.invoke('positions:save', id, position),
+  exportData: (preferences) => ipcRenderer.invoke('data:export', JSON.stringify(preferences)),
+  listFeeds: () => ipcRenderer.invoke('feeds:list'),
+  fetchFeed: (url) => ipcRenderer.invoke('feeds:fetch', url),
+  saveFeed: (url, title, content) => ipcRenderer.invoke('feeds:save', url, title, content),
+  removeFeed: (url) => ipcRenderer.invoke('feeds:remove', url),
+  openFeedLink: (url) => ipcRenderer.invoke('feeds:external', url),
+  previewDownload: (id) => ipcRenderer.invoke('downloads:preview', id),
+  fetchAndPreview: (url, extension) => ipcRenderer.invoke('downloads:fetch-and-preview', url, extension),
+  getDownloadNetwork: () => ipcRenderer.invoke('downloads:network'),
+  setDownloadNetwork: (mode) => ipcRenderer.invoke('downloads:set-network', mode),
+  listDownloads: () => ipcRenderer.invoke('downloads:list'),
+  addDownload: (url, extension) => ipcRenderer.invoke('downloads:add', url, extension),
+  fetchAndImport: (url, extension) => ipcRenderer.invoke('downloads:fetch-and-import', url, extension),
+  cancelDownload: (id) => ipcRenderer.invoke('downloads:cancel', id),
+  retryDownload: (id) => ipcRenderer.invoke('downloads:retry', id),
+  clearCompletedDownloads: () => ipcRenderer.invoke('downloads:clear-completed'),
+  removeDownload: (id) => ipcRenderer.invoke('downloads:remove', id),
+  importDownload: (id) => ipcRenderer.invoke('downloads:import', id),
+  listBooks: () => ipcRenderer.invoke('books:list'),
+  importFiles: (files) => ipcRenderer.invoke('books:import', files.map(file => webUtils.getPathForFile(file))),
+  startupBooks: () => ipcRenderer.invoke('books:startup'),
+  onOpened: (listener) => {
+    const handler = (_event, result) => listener(result);
+    ipcRenderer.on('books:opened', handler);
+    return () => ipcRenderer.removeListener('books:opened', handler);
+  },
+  chooseBooks: () => ipcRenderer.invoke('books:choose'),
+  readBookAssets: (id) => ipcRenderer.invoke('books:assets', id),
+  readBook: (id) => ipcRenderer.invoke('books:read', id)
+});
