@@ -1,0 +1,40 @@
+name: Verify published Windows installer
+on:
+  push:
+    branches: [verify/windows-0.1.0-internal]
+permissions: {}
+jobs:
+  install:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Verify installer lifecycle
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'SeaReader.Setup.0.1.0.exe'
+          $target = Join-Path $env:RUNNER_TEMP 'SeaReaderTest'
+          $exe = Join-Path $target 'SeaReader.exe'
+          $extensions = @('epub', 'txt', 'pdf')
+          $uri = 'https://github.com/matthewdailytools/seareader/releases/download/v0.1.0-internal.1/SeaReader.Setup.0.1.0.exe'
+          curl.exe --fail --retry 2 --location --silent --show-error $uri --output $installer
+          if ($LASTEXITCODE) { throw 'Release download failed' }
+          if ((Get-FileHash $installer).Hash -ne 'E452188DF86D94E81EB4B2C1CA9EA1ACF595A0A8F071F3B74F7D9492EC3215EB') { throw 'Unexpected installer hash' }
+          function Install-SeaReader {
+            $setup = Start-Process $installer -ArgumentList "/S /currentuser /D=$target" -Wait -PassThru
+            if ($setup.ExitCode -or !(Test-Path $exe)) { throw 'Installation failed' }
+            foreach ($extension in $extensions) {
+              $key = Get-Item -LiteralPath "HKCU:/Software/Classes/.$extension/OpenWithProgids"
+              if ($key.GetValueNames() -notcontains "SeaReader.$extension") { throw "Missing Open With entry for $extension" }
+            }
+          }
+          Install-SeaReader
+          $firstHash = (Get-FileHash $exe).Hash
+          Install-SeaReader
+          if ((Get-FileHash $exe).Hash -ne $firstHash) { throw 'Reinstalled executable differs' }
+          $removal = Start-Process (Join-Path $target 'Uninstall SeaReader.exe') -ArgumentList '/S /currentuser' -Wait -PassThru
+          if ($removal.ExitCode -or (Test-Path $exe)) { throw 'Uninstall failed' }
+          foreach ($extension in $extensions) {
+            $key = Get-Item -LiteralPath "HKCU:/Software/Classes/.$extension/OpenWithProgids" -ErrorAction SilentlyContinue
+            if ($key -and $key.GetValueNames() -contains "SeaReader.$extension") { throw "Registration remains for $extension" }
+          }
+          "Published installer lifecycle passed on $((Get-CimInstance Win32_OperatingSystem).Caption)."
