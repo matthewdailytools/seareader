@@ -1,0 +1,25 @@
+name: Publish SeaReader Windows internal test
+on:
+  push:
+    branches: [release/windows-0.1.0-internal]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Verify installer and publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          installer='installer/SeaReader Setup 0.1.0.exe'
+          digest='e452188df86d94e81eb4b2c1ca9ea1acf595a0a8f071f3b74f7d9492ec3215eb'
+          printf '%s  %s\n' "$digest" "$installer" | sha256sum --check
+          gh release create v0.1.0-internal.1 "$installer#SeaReader 0.1.0 Windows 11 x64 安装包" \
+            --target 38858a264ad9bd722d513f9a89722c890a2145fa \
+            --title 'SeaReader 0.1.0 · Windows 11 x64 内测版' \
+            --prerelease --latest=false --notes-file installer/release-notes.md
