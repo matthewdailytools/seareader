@@ -40,6 +40,8 @@
 
 ## 本机原型对齐构建
 
+- GitHub Releases 已发布 `v0.1.0-internal.2` 预发行版，对应源码提交 `556d2e6`。GitHub 的安装包 SHA-256 与本机实测包一致。[发布说明](https://github.com/matthewdailytools/seareader/releases/tag/v0.1.0-internal.2) · [下载安装包](https://github.com/matthewdailytools/seareader/releases/download/v0.1.0-internal.2/SeaReader.Setup.0.1.0.exe)
 - 本机安装包位于 `release/prototype-aligned/SeaReader Setup 0.1.0.exe`。SHA-256 为 `94E27B3B47216434E45BF9A6F31CA6B5F6D07C1B1F52C103D553740E10368CFC`。
 - 阅读页采用原型的居中正文、顶部导航、底部进度与按需面板。已在 Windows Electron 中用 EPUB、TXT 和 PDF 核对翻页、目录或页码跳转、搜索与返回、沉浸模式、选区翻译和标注。
 - 本机从 NSIS 安装包安装后，用隔离书库验证了日语听书提示、离线语音包安装和自动播放。重启应用后再次播放成功。测试禁止了页面联网，语音安装与合成直接使用本地资源。
+- 本机通过 Windows 系统媒体会话发出暂停和播放指令，已安装的 SeaReader 均正确响应。锁屏、实体媒体键和讲述人仍待实测。
