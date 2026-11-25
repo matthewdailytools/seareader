@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('seaReader', {
   removeBookmark: (id, bookmarkId) => ipcRenderer.invoke('bookmarks:remove', id, bookmarkId),
   generateSpeech: (id, text, language) => ipcRenderer.invoke('speech:generate', id, text, language),
   cancelSpeech: (id) => ipcRenderer.invoke('speech:cancel', id),
+  openVoiceSettings: () => ipcRenderer.invoke('speech:settings'),
   getListeningPosition: (source) => ipcRenderer.invoke('listening:get', source),
   saveListeningPosition: (source, part) => ipcRenderer.invoke('listening:save', source, part),
   getPosition: (id) => ipcRenderer.invoke('positions:get', id),

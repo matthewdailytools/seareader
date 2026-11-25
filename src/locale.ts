@@ -38,7 +38,6 @@ export function loadTranslationTarget(): TextLanguage | 'interface' {
 
 type TranslateLabel = ReturnType<typeof translator>;
 const operations: Record<string, [string, string]> = {
-  "未安装对应语言的 Windows 本地语音。": ["Install the corresponding Windows voice to listen in this language.", "この言語の Windows 音声をインストールしてください。"],
   "无法生成本地语音。": ["Could not generate speech on this device.", "端末で音声を生成できませんでした。"],
   "缺少离线 OCR 语言包，请重新安装应用": ["An OCR language pack is missing. Reinstall SeaReader.", "OCR 言語パックがありません。SeaReader を再インストールしてください。"],
   "无效的图片或识别语言": ["The image or OCR language is invalid.", "画像または認識言語が無効です。"],

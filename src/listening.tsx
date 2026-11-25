@@ -72,6 +72,8 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
     savePreference('listening-preferences', JSON.stringify(value));
   }
   const [error, setError] = useState('');
+  const [missingVoice, setMissingVoice] = useState(false);
+  const [retry, setRetry] = useState(0);
 
   const request = useRef(0);
   const audio = useRef<HTMLAudioElement>(null);
@@ -113,8 +115,14 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
     let active = true;
     let url: string | undefined;
     setClip('');
+    setMissingVoice(false);
     void window.seaReader.generateSpeech(id, text, preferences.language === 'auto' ? detectTextLanguage(text) : preferences.language).then(bytes => {
       if (!active) return;
+      if (bytes === null) {
+        setMissingVoice(true);
+        setPlaying(false);
+        return;
+      }
       url = URL.createObjectURL(new Blob([Uint8Array.from(bytes)], { type: 'audio/wav' }));
       setClip(url);
     }, reason => {
@@ -127,7 +135,7 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
       if (url) URL.revokeObjectURL(url);
       else void window.seaReader.cancelSpeech(id).catch(() => {});
     };
-  }, [source, index, preferences.language]);
+  }, [source, index, preferences.language, retry]);
 
   useEffect(() => {
     const player = audio.current;
@@ -175,7 +183,11 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
       <div className="reader-controls">
         {source.chapters && <button disabled={chapter <= 0} onClick={() => setIndex(source.chapters![chapter - 1])}>{tr('上一章', 'Previous chapter', '前の章')}</button>}
         <button disabled={index <= 0} onClick={() => setIndex(index - 1)}>{tr('上一段', 'Previous passage', '前の段落')}</button>
-        <button onClick={() => { setError(''); setPlaying(!playing); }}>{playing ? tr('暂停', 'Pause', '一時停止') : tr('继续', 'Resume', '再開')}</button>
+        <button onClick={() => {
+          setError('');
+          if (missingVoice) setRetry(value => value + 1);
+          setPlaying(!playing);
+        }}>{missingVoice ? tr('重试听书', 'Retry narration', '読み上げを再試行') : playing ? tr('暂停', 'Pause', '一時停止') : tr('继续', 'Resume', '再開')}</button>
         <button disabled={index + 1 >= source.parts.length} onClick={() => setIndex(index + 1)}>{tr('下一段', 'Next passage', '次の段落')}</button>
         {source.chapters && <button disabled={chapter + 1 >= source.chapters.length} onClick={() => setIndex(source.chapters![chapter + 1])}>{tr('下一章', 'Next chapter', '次の章')}</button>}
         <label>{tr('倍速', 'Speed', '再生速度')} <select value={rate} onChange={event => setRate(Number(event.target.value))}>
@@ -186,6 +198,20 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
         <output>{index + 1} / {source.parts.length}</output>
         <button onClick={() => { request.current++; setPlaying(false); setSource(undefined); }}>{tr('停止', 'Stop', tr('停止', 'Stop', '停止'))}</button>
       </div>
+      {missingVoice && <>
+        <p role="alert">{tr(
+          'Windows 缺少当前听书语言的本地语音。请在对应语言的「语言选项」中安装「语音」，然后重试听书。',
+          'Windows is missing a local voice for the narration language. Install Speech in that language’s Language options, then retry narration.',
+          '読み上げ言語の Windows 音声がありません。その言語の「言語のオプション」で「音声」をインストールし、再試行してください。'
+        )}</p>
+        <button onClick={() => {
+          void window.seaReader.openVoiceSettings().catch(() => setError(tr(
+            '无法打开设置。请手动打开 Windows 的「时间和语言 → 语言和区域」。',
+            'Could not open Settings. In Windows, go to Time & language → Language & region.',
+            '設定を開けませんでした。Windows の「時刻と言語 → 言語と地域」を開いてください。'
+          )));
+        }}>{tr('打开 Windows 语言设置', 'Open Windows language settings', 'Windows の言語設定を開く')}</button>
+      </>}
       {error && <p role="alert">{error}</p>}
     </aside>}
   </ListeningContext.Provider>;

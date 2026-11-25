@@ -40,8 +40,12 @@ export function registerSpeech(register) {
         windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024
       }, (error, stdout) => {
         if (active?.child === child) active = undefined;
+        if (error?.code === 4) {
+          resolve(null);
+          return;
+        }
         if (error || !stdout) {
-          reject(new Error(error?.code === 4 ? '未安装对应语言的 Windows 本地语音。' : '无法生成本地语音。'));
+          reject(new Error('无法生成本地语音。'));
           return;
         }
         resolve(new Uint8Array(Buffer.from(stdout, 'base64')));

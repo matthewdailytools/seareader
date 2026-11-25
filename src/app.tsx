@@ -32,7 +32,8 @@ declare global {
       listBookmarks(id: string): Promise<Bookmark[]>;
       addBookmark(id: string): Promise<void>;
       removeBookmark(id: string, bookmarkId: number): Promise<void>;
-      generateSpeech(id: string, text: string, language: string): Promise<Uint8Array>;
+      generateSpeech(id: string, text: string, language: string): Promise<Uint8Array | null>;
+      openVoiceSettings(): Promise<void>;
       cancelSpeech(id: string): Promise<void>;
       getListeningPosition(source: string): Promise<number | null>;
       saveListeningPosition(source: string, part: number): Promise<void>;
