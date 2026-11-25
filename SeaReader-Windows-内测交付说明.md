@@ -2,8 +2,9 @@
 
 ## 安装包
 
+- GitHub Releases 已发布 `v0.1.0-internal.1` 预发行版，对应源码提交 `38858a2`。[发布说明](https://github.com/matthewdailytools/seareader/releases/tag/v0.1.0-internal.1) · [下载安装包](https://github.com/matthewdailytools/seareader/releases/download/v0.1.0-internal.1/SeaReader.Setup.0.1.0.exe)
 - 文件名为 `SeaReader Setup 0.1.0.exe`，位于项目的 `release` 目录。
-- 适用系统为 Windows 11 x64。此包为未签名内测构建。
+- 适用系统为 Windows 11 x64。此包为未签名内测构建，待取得证书后补齐正式签名。
 - SHA-256 为 `E452188DF86D94E81EB4B2C1CA9EA1ACF595A0A8F071F3B74F7D9492EC3215EB`。
 - 安装会把 SeaReader 注册到 EPUB、TXT 和 PDF 的「打开方式」列表，保留原有默认应用。书籍、标注和进度存放在本机应用数据目录。
 
