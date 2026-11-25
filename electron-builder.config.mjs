@@ -17,6 +17,7 @@ export default {
     'node_modules/@napi-rs/**'
   ],
   files: ['dist/**', 'desktop/**', 'package.json'],
+  extraResources: [{ from: 'voice-assets', to: 'japanese-voice' }],
   win: {
     target: [{ target: 'nsis', arch: ['x64'] }]
   },

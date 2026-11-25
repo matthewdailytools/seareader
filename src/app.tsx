@@ -1,15 +1,16 @@
 import { hydratePreferences, savePreference } from './preferences';
 import { defaultPageTurning, loadPageTurning } from './page-turning';
 import { BookCover } from './book-cover';
-import { formatOperationError, LocaleContext, loadLocalePreference, resolveLocale, translator, loadTranslationTarget, type LocalePreference, type TextLanguage } from './locale';
+import { formatOperationError, LocaleContext, loadLocalePreference, resolveLocale, translator, loadTranslationTarget, useTranslation, type LocalePreference, type TextLanguage } from './locale';
 import { Feeds, type SavedFeed } from './feeds';
 import { Downloads, type Download } from './downloads';
 import { ListeningProvider, ListeningSettings, useListeningSettings } from './listening';
 import type { Annotation } from './annotations';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { EpubReader, PdfReader } from './format-readers';
 import { TextReader } from './text-reader';
+import { ReaderShell, ReaderSlot } from './reader-shell';
 import { Bookmarks, type Bookmark } from './bookmarks';
 import { AppearanceControls, defaultAppearance, loadAppearance } from './appearance';
 import './style.css';
@@ -17,6 +18,15 @@ import './style.css';
 type Book = { id: string; title: string; format: 'epub' | 'txt' | 'pdf'; openedAt: number | null };
 export type PreviewBook = Pick<Book, 'id' | 'title' | 'format'> & { bytes: Uint8Array };
 type OpenResult = { books: Book[]; errors: string[]; openedId?: string; importedCount: number };
+type LibraryPanel = 'search' | 'notes';
+type LibraryMark = {
+  book: Book;
+  key: string;
+  position: string;
+  createdAt: number;
+  quotation?: string;
+  note?: string;
+};
 declare global {
   interface Window {
     seaReader: {
@@ -26,13 +36,14 @@ declare global {
       cancelRecognition(jobId: string): Promise<void>;
       listRecognizedPages(id: string): Promise<{ page: number; text: string }[]>;
       saveRecognizedPage(id: string, page: number, text: string): Promise<void>;
-      listAnnotations(id: string): Promise<Annotation[]>;
+      listAnnotations(id: string): Promise<(Annotation & { updatedAt: number })[]>;
       saveAnnotation(id: string, position: string, quotation: string, note: string): Promise<void>;
       removeAnnotation(id: string, annotationId: number): Promise<void>;
       listBookmarks(id: string): Promise<Bookmark[]>;
       addBookmark(id: string): Promise<void>;
       removeBookmark(id: string, bookmarkId: number): Promise<void>;
       generateSpeech(id: string, text: string, language: string): Promise<Uint8Array | null>;
+      installJapaneseVoice(): Promise<void>;
       openVoiceSettings(): Promise<void>;
       cancelSpeech(id: string): Promise<void>;
       getListeningPosition(source: string): Promise<number | null>;
@@ -70,6 +81,58 @@ declare global {
   }
 }
 
+function LibraryNotes({ books, onOpen }: { books: Book[]; onOpen: (book: Book, position: string) => void }) {
+  const tr = useTranslation();
+  const [marks, setMarks] = useState<LibraryMark[]>();
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setFailed(false);
+    async function load() {
+      const groups = await Promise.all(books.map(async book => {
+        const [bookmarks, annotations] = await Promise.all([
+          window.seaReader.listBookmarks(book.id), window.seaReader.listAnnotations(book.id)
+        ]);
+        const rows: LibraryMark[] = bookmarks.map(item => ({
+          book, key: `${book.id}:bookmark:${item.id}`, position: item.position, createdAt: item.createdAt
+        }));
+        for (const item of annotations) {
+          let position = item.position;
+          if (book.format === 'pdf') {
+            try {
+              const page = JSON.parse(position).page;
+              if (!Number.isSafeInteger(page) || page < 1) continue;
+              position = String(page);
+            } catch { continue; }
+          }
+          rows.push({
+            book, key: `${book.id}:annotation:${item.id}`, position, createdAt: item.updatedAt,
+            quotation: item.quotation, note: item.note
+          });
+        }
+        return rows;
+      }));
+      if (active) setMarks(groups.flat().sort((left, right) => right.createdAt - left.createdAt));
+    }
+    void load().catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [books]);
+
+  if (failed) return <p role="alert">{tr('无法读取书签与笔记。', 'Could not load bookmarks and notes.', 'しおりとメモを読み込めませんでした。')}</p>;
+  if (!marks) return <p role="status">{tr('正在读取…', 'Loading…', '読み込み中…')}</p>;
+  if (!marks.length) return <p>{tr('暂无书签与笔记。', 'No bookmarks or notes yet.', 'しおりやメモはまだありません。')}</p>;
+  return <ul className="library-notes">
+    {marks.map(item => <li key={item.key}>
+      <button onClick={() => onOpen(item.book, item.position)}>
+        <strong>{item.book.title}</strong>
+        <span>{item.note || item.quotation || tr('书签', 'Bookmark', 'しおり')}</span>
+        <small>{new Date(item.createdAt).toLocaleDateString()}</small>
+      </button>
+    </li>)}
+  </ul>;
+}
+
 function App({ localePreference, setLocalePreference }: {
   localePreference: LocalePreference;
   setLocalePreference: (preference: LocalePreference) => void;
@@ -103,6 +166,11 @@ function App({ localePreference, setLocalePreference }: {
   const [openAfterImport, setOpenAfterImport] = useState(() => localStorage.getItem('open-after-import') === 'true');
   const [query, setQuery] = useState('');
   const [format, setFormat] = useState('');
+  const [libraryPanel, setLibraryPanel] = useState<LibraryPanel>();
+  const searchInput = useRef<HTMLInputElement>(null);
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const notesButton = useRef<HTMLButtonElement>(null);
+  const libraryPanelElement = useRef<HTMLElement>(null);
   const [jump, setJump] = useState<{ revision: number; position: string }>();
   const [bytes, setBytes] = useState<Uint8Array>();
   const [error, setError] = useState('');
@@ -115,15 +183,11 @@ function App({ localePreference, setLocalePreference }: {
   useEffect(() => {
     function openResult(result: OpenResult, startup = false) {
       setBooks(result.books);
-      setError(result.errors.map(error => formatOperationError(error, tr)).join('\n'));
       const book = result.books.find(book => book.id === result.openedId) ??
         (startup && localStorage.getItem('resume-on-start') === 'true'
           ? result.books.find(book => book.openedAt !== null) : undefined);
-      if (book) {
-        setJump(undefined);
-        setBytes(undefined);
-        setSelected(book);
-      }
+      if (book) openBook(book);
+      setError(result.errors.map(error => formatOperationError(error, tr)).join('\n'));
     }
     const unsubscribe = window.seaReader.onOpened(openResult);
     window.seaReader.startupBooks().then(result => openResult(result, true), reason => setError(formatOperationError(reason, tr)));
@@ -155,13 +219,29 @@ function App({ localePreference, setLocalePreference }: {
     }
   }
 
-  function openBook(book: Book) {
-    setJump(undefined);
+  function openBook(book: Book, position?: string) {
+    setJump(position ? { revision: 0, position } : undefined);
     setBytes(undefined);
     setError('');
     setSelected(book);
+    setPreview(undefined);
+    setSettingsOpen(false);
+    setFeedsOpen(false);
+    setDownloadsOpen(false);
+    setLibraryPanel(undefined);
   }
   const recent = books.find(book => book.openedAt !== null);
+  const [recentPdf, setRecentPdf] = useState<{ bookId: string; page: number }>();
+  const recentPdfId = recent?.format === 'pdf' ? recent.id : undefined;
+  useEffect(() => {
+    if (!recentPdfId || selected || preview || feedsOpen || downloadsOpen || settingsOpen) return;
+    let active = true;
+    void window.seaReader.getPosition(recentPdfId).then(value => {
+      const page = Number(value);
+      if (active) setRecentPdf(Number.isSafeInteger(page) && page > 0 ? { bookId: recentPdfId, page } : undefined);
+    }).catch(() => { if (active) setRecentPdf(undefined); });
+    return () => { active = false; };
+  }, [recentPdfId, selected, preview, feedsOpen, downloadsOpen, settingsOpen]);
   const filtered = books.filter(book =>
     (!format || book.format === format) &&
     book.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
@@ -201,86 +281,82 @@ function App({ localePreference, setLocalePreference }: {
     }
   }
 
-  const libraryMode = !selected && !preview;
-  function switchLibraryView(view: 'library' | 'feeds' | 'downloads' | 'settings') {
+  const readingBook = preview ?? selected;
+  const libraryMode = !readingBook;
+  const showLibrary = libraryMode && !feedsOpen && !downloadsOpen && !settingsOpen;
+  useEffect(() => {
+    if (!showLibrary) return;
+    if (libraryPanel === 'search') {
+      searchInput.current?.focus();
+      searchInput.current?.select();
+    } else if (libraryPanel === 'notes') libraryPanelElement.current?.focus();
+  }, [libraryPanel, showLibrary]);
+  useEffect(() => {
+    if (!showLibrary) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.ctrlKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        if (libraryPanel === 'search') {
+          searchInput.current?.focus();
+          searchInput.current?.select();
+        } else setLibraryPanel('search');
+      } else if (event.key === 'Escape' && libraryPanel) {
+        event.preventDefault();
+        dismissLibraryPanel();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [libraryPanel, showLibrary]);
+
+  function dismissLibraryPanel() {
+    setLibraryPanel(undefined);
+    (libraryPanel === 'search' ? searchButton : notesButton).current?.focus();
+  }
+
+  function switchLibraryView(view: 'library' | 'feeds' | 'downloads') {
     setError('');
+    setLibraryPanel(undefined);
     setFeedsOpen(view === 'feeds');
     setDownloadsOpen(view === 'downloads');
-    setSettingsOpen(view === 'settings');
+    setSettingsOpen(false);
     if (view === 'library') {
       void window.seaReader.listBooks().then(setBooks, reason => setError(formatOperationError(reason, tr)));
     }
   }
 
-  return <main className={libraryMode ? 'library-shell' : undefined} onDragOver={event => {
-    if (event.dataTransfer.types.includes('Files')) event.preventDefault();
-  }} onDrop={event => {
-    event.preventDefault();
-    const files = Array.from(event.dataTransfer.files);
-    if (files.length) void chooseBooks(files);
-  }}>
-    <header>
-      <strong>SeaReader</strong>
-      <div className="header-actions">
-      {preview ? <button onClick={() => { setPreview(undefined); setError(''); }}>{tr('返回来源', 'Back to source', '取得元に戻る')}</button> :
-      feedsOpen ? <button onClick={() => setFeedsOpen(false)}>{tr('返回', 'Back', '戻る')}</button> : downloadsOpen ? <button onClick={() => {
-        setDownloadsOpen(false);
-        void window.seaReader.listBooks().then(setBooks, reason => setError(formatOperationError(reason, tr)));
-      }}>{tr('返回', 'Back', '戻る')}</button> : settingsOpen ? <button onClick={() => setSettingsOpen(false)}>{tr('返回', 'Back', '戻る')}</button> : <>
-      <button className="compact-nav-action" onClick={() => { setJump(undefined); setFeedsOpen(true); }}>{tr('订阅', 'Subscriptions', '購読')}</button>
-      <button className="compact-nav-action" onClick={() => { setJump(undefined); setDownloadsOpen(true); }}>{tr('下载', 'Downloads', 'ダウンロード')}</button>
-      <button className="compact-nav-action" onClick={() => { setJump(undefined); setSettingsOpen(true); }}>{tr('设置', 'Settings', '設定')}</button>
-      {selected ? <button onClick={() => {
-        setSelected(undefined);
-        void window.seaReader.listBooks().then(setBooks, reason => setError(formatOperationError(reason, tr)));
-      }}>{tr('返回书库', 'Back to library', 'ライブラリに戻る')}</button> :
-        <button className="primary" onClick={() => void chooseBooks()}>{tr('导入文件', 'Import files', 'ファイルを取り込む')}</button>}
-      </>}
-      </div>
-    </header>
-    {libraryMode && <nav className="library-nav" aria-label={tr('主导航', 'Main navigation', 'メインナビゲーション')}>
-      <button aria-current={!feedsOpen && !downloadsOpen && !settingsOpen ? 'page' : undefined}
-        onClick={() => switchLibraryView('library')}>{tr('书库', 'Library', 'ライブラリ')}</button>
-      <button aria-current={feedsOpen ? 'page' : undefined}
-        onClick={() => switchLibraryView('feeds')}>{tr('订阅', 'Subscriptions', '購読')}</button>
-      <button aria-current={downloadsOpen ? 'page' : undefined}
-        onClick={() => switchLibraryView('downloads')}>{tr('下载', 'Downloads', 'ダウンロード')}</button>
-      <button aria-current={settingsOpen ? 'page' : undefined}
-        onClick={() => switchLibraryView('settings')}>{tr('设置', 'Settings', '設定')}</button>
-    </nav>}
-    <div className="workspace-content">
-    {error && <p role="alert">{error}</p>}
-    {feedsOpen && <div hidden={Boolean(preview)}><Feeds onPreview={setPreview}
-      onImported={() => void window.seaReader.listBooks().then(setBooks, reason => setError(formatOperationError(reason, tr)))} /></div>}
-    {downloadsOpen && <div hidden={Boolean(preview)}><Downloads onPreview={setPreview} /></div>}
-    {preview ? <section className="reading" aria-label={tr('临时阅读', 'Preview', 'プレビュー')}>
-      <h1>{preview.title}</h1>
-      <button disabled={importingPreview} onClick={async () => {
-        setImportingPreview(true);
-        setError('');
-        try {
-          const id = await window.seaReader.importDownload(preview.id);
-          const books = await window.seaReader.listBooks();
-          setBooks(books);
-          const book = books.find(item => item.id === id);
-          if (book) {
-            setPreview(undefined);
-            setFeedsOpen(false);
-            setDownloadsOpen(false);
-            openBook(book);
-          }
-        } catch (reason) {
-          setError(formatOperationError(reason, tr));
-        } finally {
-          setImportingPreview(false);
-        }
-      }}>{tr('导入书库', 'Add to library', 'ライブラリに追加')}</button>
-      {preview.format === 'txt' ? <TextReader preview id={preview.id} title={preview.title} bytes={preview.bytes} appearance={appearance} /> :
-       preview.format === 'epub' ? <EpubReader preview id={preview.id} title={preview.title} bytes={preview.bytes} appearance={appearance} /> :
-       <PdfReader preview id={preview.id} title={preview.title} bytes={preview.bytes} />}
-    </section> : feedsOpen || downloadsOpen ? null : settingsOpen ? <section aria-label={tr('设置', 'Settings', '設定')}>
+  async function importPreview() {
+    if (!preview) return;
+    setImportingPreview(true);
+    setError('');
+    try {
+      const id = await window.seaReader.importDownload(preview.id);
+      const refreshed = await window.seaReader.listBooks();
+      setBooks(refreshed);
+      const book = refreshed.find(item => item.id === id);
+      if (book) openBook(book);
+    } catch (reason) {
+      setError(formatOperationError(reason, tr));
+    } finally {
+      setImportingPreview(false);
+    }
+  }
+
+  function backFromReading() {
+    setError('');
+    if (preview) {
+      setPreview(undefined);
+      return;
+    }
+    setSelected(undefined);
+    setBytes(undefined);
+    setJump(undefined);
+    void window.seaReader.listBooks().then(setBooks, reason => setError(formatOperationError(reason, tr)));
+  }
+
+  const settings = <section aria-label={tr('设置', 'Settings', '設定')}>
       <h1>{tr('设置', 'Settings', '設定')}</h1>
-      <AppearanceControls value={appearance} onChange={setAppearance} layout />
+      <AppearanceControls value={appearance} onChange={setAppearance} />
       <p><label>{tr('界面语言', 'Interface language', '表示言語')} <select value={localePreference}
         onChange={event => setLocalePreference(event.target.value as LocalePreference)}>
         <option value="system">{tr('跟随系统', 'System default', 'システム設定')}</option>
@@ -350,28 +426,149 @@ function App({ localePreference, setLocalePreference }: {
         }}>{tr('恢复默认偏好', 'Reset preferences', '設定を初期化')}</button>
       </div>
       {exportStatus && <p role="status">{exportStatus}</p>}
-    </section> : selected ? <section className="reading" aria-label={tr('阅读', 'Reading', '読書')}>
-      <h1>{selected.title}</h1>
-      <AppearanceControls value={appearance} onChange={setAppearance} layout={selected.format !== 'pdf'} />
-      {bytes && <Bookmarks key={selected.id} bookId={selected.id} onJump={position => setJump(value => ({ revision: (value?.revision ?? 0) + 1, position }))} />}
-      {bytes ? (selected.format === 'txt' ? <TextReader title={selected.title} appearance={appearance} key={jump?.revision ?? 0} initialPosition={jump?.position} id={selected.id} bytes={bytes} /> : selected.format === 'epub' ? <EpubReader title={selected.title} appearance={appearance} key={jump?.revision ?? 0} initialPosition={jump?.position} id={selected.id} bytes={bytes} /> : <PdfReader title={selected.title} key={jump?.revision ?? 0} initialPosition={jump?.position} id={selected.id} bytes={bytes} />) : <p>{tr('正在读取…', 'Loading…', '読み込み中…')}</p>}
-    </section> : <section>
-      <h1>{tr('书库', 'Library', 'ライブラリ')}</h1>
-      {recent && <p><button onClick={() => openBook(recent)}>{tr('继续阅读', 'Continue reading', '続きを読む')} · {recent.title}</button></p>}
-      <div className="filters">
-        <input type="search" aria-label={tr('搜索书库', 'Search library', 'ライブラリを検索')} placeholder={tr('搜索书名', 'Search titles', 'タイトルを検索')} value={query} onChange={event => setQuery(event.target.value)} />
-        <select aria-label={tr('按格式筛选', 'Filter by format', '形式で絞り込む')} value={format} onChange={event => setFormat(event.target.value)}>
-          <option value="">{tr('全部格式', 'All formats', 'すべての形式')}</option><option value="epub">EPUB</option>
-          <option value="txt">TXT</option><option value="pdf">PDF</option>
-        </select>
+    </section>;
+
+  const readingBytes = preview?.bytes ?? bytes;
+  const reader = readingBook && <ReaderShell
+    key={(preview ? 'preview:' : 'book:') + readingBook.id}
+    title={readingBook.title}
+    format={readingBook.format}
+    backLabel={preview
+      ? feedsOpen ? tr('订阅', 'Subscriptions', '購読') : tr('下载', 'Downloads', 'ダウンロード')
+      : tr('书库', 'Library', 'ライブラリ')}
+    onBack={backFromReading}
+    onSettings={() => setSettingsOpen(true)}
+    settings={settingsOpen ? <>
+      <div className="reader-settings-header">
+        <button onClick={() => setSettingsOpen(false)}>‹ {tr('返回', 'Back', '戻る')}</button>
+      </div>
+      {settings}
+    </> : undefined}
+    extraAction={preview ? <button className="primary" disabled={importingPreview} onClick={() => void importPreview()}>
+      {tr('导入书库', 'Add to library', 'ライブラリに追加')}
+    </button> : undefined}
+  >
+    {error && <p role="alert">{error}</p>}
+    {readingBook.format !== 'pdf' && <ReaderSlot name="appearance">
+      <AppearanceControls value={appearance} onChange={setAppearance} reading />
+    </ReaderSlot>}
+    {selected && !preview && readingBytes && (
+      <Bookmarks bookId={selected.id} onJump={position =>
+        setJump(value => ({ revision: (value?.revision ?? 0) + 1, position }))
+      } />
+    )}
+    {readingBytes ? (
+      readingBook.format === 'txt' ? <TextReader title={readingBook.title} appearance={appearance}
+        key={jump?.revision ?? 0} initialPosition={jump?.position} id={readingBook.id} bytes={readingBytes} preview={Boolean(preview)} /> :
+      readingBook.format === 'epub' ? <EpubReader title={readingBook.title} appearance={appearance}
+        key={jump?.revision ?? 0} initialPosition={jump?.position} id={readingBook.id} bytes={readingBytes} preview={Boolean(preview)} /> :
+      <PdfReader title={readingBook.title}
+        key={jump?.revision ?? 0} initialPosition={jump?.position} id={readingBook.id} bytes={readingBytes} preview={Boolean(preview)} />
+    ) : <p>{tr('正在读取…', 'Loading…', '読み込み中…')}</p>}
+  </ReaderShell>;
+
+  const shellClass = libraryMode
+    ? 'library-shell' + (settingsOpen ? ' library-settings-shell' : '') + (showLibrary && libraryPanel ? ' library-shell-panel-open' : '')
+    : 'reading-window';
+  const panelLabel = libraryPanel === 'search'
+    ? tr('搜索', 'Search', '検索')
+    : tr('书签与笔记', 'Bookmarks and notes', 'しおりとメモ');
+  const recentPage = recentPdf?.bookId === recent?.id ? recentPdf?.page : undefined;
+
+  function libraryCover(book: Book, feature = false) {
+    return <span className={'library-cover' + (feature ? ' library-cover-feature' : '')} data-title={book.title} aria-hidden="true">
+      <BookCover id={book.id} format={book.format} />
+    </span>;
+  }
+
+  return <main className={shellClass} onDragOver={event => {
+    if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+  }} onDrop={event => {
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length) void chooseBooks(files);
+  }}>
+    {libraryMode && <header className="library-header">
+      {settingsOpen ? <>
+        <button onClick={() => setSettingsOpen(false)}>‹ {tr('返回', 'Back', '戻る')}</button>
+        <strong>{tr('设置', 'Settings', '設定')}</strong>
+      </> : <>
+        <strong>SeaReader</strong>
+        <div className="header-actions">
+          {showLibrary && <>
+          <button ref={searchButton} aria-keyshortcuts="Control+F" aria-expanded={libraryPanel === 'search'} aria-controls="library-side-panel"
+            onClick={() => libraryPanel === 'search' ? dismissLibraryPanel() : setLibraryPanel('search')}>
+            {tr('搜索', 'Search', '検索')}
+          </button>
+          <button className="primary" onClick={() => void chooseBooks()}>{tr('导入文件', 'Import files', 'ファイルを取り込む')}</button>
+          </>}
+          <button onClick={() => { setLibraryPanel(undefined); setError(''); setSettingsOpen(true); }}>{tr('设置', 'Settings', '設定')}</button>
+        </div>
+      </>}
+    </header>}
+    {libraryMode && !settingsOpen && <nav className="library-nav" aria-label={tr('主导航', 'Main navigation', 'メインナビゲーション')}>
+      <button aria-current={!feedsOpen && !downloadsOpen && !settingsOpen ? 'page' : undefined}
+        onClick={() => switchLibraryView('library')}>{tr('书库', 'Library', 'ライブラリ')}</button>
+      <button aria-current={feedsOpen ? 'page' : undefined}
+        onClick={() => switchLibraryView('feeds')}>{tr('订阅', 'Subscriptions', '購読')}</button>
+      <button aria-current={downloadsOpen ? 'page' : undefined}
+        onClick={() => switchLibraryView('downloads')}>{tr('下载', 'Downloads', 'ダウンロード')}</button>
+    </nav>}
+    <div className="workspace-content">
+    {error && libraryMode && <p className="library-notice" role="alert">{error}</p>}
+    {feedsOpen && <div className="library-source" hidden={Boolean(readingBook) || settingsOpen}><Feeds onPreview={setPreview}
+      onImported={() => void window.seaReader.listBooks().then(setBooks, reason => setError(formatOperationError(reason, tr)))} /></div>}
+    {downloadsOpen && <div className="library-source" hidden={Boolean(readingBook) || settingsOpen}><Downloads onPreview={setPreview} /></div>}
+    {reader ?? (settingsOpen ? <div className="library-settings-content">{settings}</div> : feedsOpen || downloadsOpen ? null : <section className="library-page">
+      <div className="library-title">
+        <h1>{tr('我的书库', 'My library', 'マイライブラリ')}</h1>
+        <span>{tr(`${books.length} 本书`, `${books.length} ${books.length === 1 ? 'book' : 'books'}`, `${books.length} 冊`)}</span>
+      </div>
+      {recent && <section className="library-feature" aria-label={tr('继续阅读', 'Continue reading', '続きを読む')}>
+        {libraryCover(recent, true)}
+        <div className="library-feature-copy">
+          <p>{tr('继续阅读', 'Continue reading', '続きを読む')}</p>
+          <h2>{recent.title}</h2>
+          <p className="library-feature-location">
+            {recent.format.toUpperCase()}
+            {recentPage ? ' · ' + tr(`第 ${recentPage} 页`, `Page ${recentPage}`, `${recentPage} ページ`) : ''}
+          </p>
+          <button className="primary" onClick={() => openBook(recent)}>{tr('继续阅读', 'Continue reading', '続きを読む')} →</button>
+        </div>
+      </section>}
+      <div className="library-collection-heading">
+        <h2>{tr('全部书籍', 'All books', 'すべての本')}</h2>
+        <button className="library-quiet-button" ref={notesButton} aria-expanded={libraryPanel === 'notes'} aria-controls="library-side-panel"
+          onClick={() => libraryPanel === 'notes' ? dismissLibraryPanel() : setLibraryPanel('notes')}>
+          {tr('书签与笔记', 'Bookmarks and notes', 'しおりとメモ')}
+        </button>
+      </div>
+      <div className="library-filters" role="group" aria-label={tr('按格式筛选', 'Filter by format', '形式で絞り込む')}>
+        {['', 'epub', 'txt', 'pdf'].map(value => <button key={value} aria-pressed={format === value} onClick={() => setFormat(value)}>
+          {value ? value.toUpperCase() : tr('全部', 'All', 'すべて')}
+        </button>)}
       </div>
       {filtered.length ? <ul className="shelf">{filtered.map(book => <li key={book.id}>
-        <button onClick={() => openBook(book)}>
-          <BookCover id={book.id} format={book.format} /><strong>{book.title}</strong>
+        <button className="shelf-book" onClick={() => openBook(book)}>
+          {libraryCover(book)}
+          <span className="library-book-meta"><strong>{book.title}</strong>
+            <small>{book.format.toUpperCase()} · {book.openedAt === null
+              ? tr('未开始', 'Unread', '未読')
+              : new Date(book.openedAt).toLocaleDateString(resolveLocale(localePreference))}</small>
+          </span>
         </button>
       </li>)}</ul> : <p>{books.length ? tr('没有匹配的书籍。', 'No matching books.', '該当する本がありません。') : tr('导入 EPUB、TXT 或 PDF，开始阅读。', 'Import an EPUB, TXT or PDF to start reading.', 'EPUB、TXT、PDF を取り込んで読書を始めましょう。')}</p>}
-    </section>}
+    </section>)}
     </div>
+    {showLibrary && libraryPanel && <aside ref={libraryPanelElement} id="library-side-panel" className="library-panel" aria-label={panelLabel} tabIndex={-1}>
+      <div className="library-panel-heading"><h2>{panelLabel}</h2>
+        <button onClick={dismissLibraryPanel}>{tr('关闭', 'Close', '閉じる')}</button>
+      </div>
+      {libraryPanel === 'search' ? <label>{tr('关键词', 'Keyword', 'キーワード')}
+        <input ref={searchInput} type="search" aria-label={tr('搜索书库', 'Search library', 'ライブラリを検索')}
+          placeholder={tr('搜索书名', 'Search titles', 'タイトルを検索')} value={query} onChange={event => setQuery(event.target.value)} />
+      </label> : <LibraryNotes books={books} onOpen={openBook} />}
+    </aside>}
   </main>;
 }
 

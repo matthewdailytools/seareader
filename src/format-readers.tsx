@@ -5,7 +5,7 @@ import { speechParts, useListening } from './listening';
 import { OcrPanel } from './ocr-panel';
 import { Annotations, type Annotation, type TextSelection } from './annotations';
 import type { Appearance } from './appearance';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ePub, { type Rendition } from 'epubjs';
 import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy } from 'pdfjs-dist';
 import 'pdfjs-dist/web/pdf_viewer.css';
@@ -13,8 +13,12 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 import { Outline, type OutlineEntry } from './outline';
 import { ReaderSearch, searchLimit, textExcerpt, type SearchHit } from './reader-search';
+import { ReaderSlot, useReaderPanel } from './reader-shell';
+import { NarrationContextMenu, keyboardTextCursor, narrationMenuKey, textCursorAtPoint, type NarrationMenuPosition } from './narration-context';
 import type Section from 'epubjs/types/section';
 import type { NavItem } from 'epubjs/types/navigation';
+import type { Location } from 'epubjs/types/rendition';
+import type Contents from 'epubjs/types/contents';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -40,9 +44,28 @@ function pdfOutline(items: PdfOutlineItem[]): OutlineEntry<PdfOutlineItem['dest'
 }
 
 type ReaderProps = { preview?: boolean; title: string; bytes: Uint8Array; id: string; initialPosition?: string };
+type TranslationRequest = { text: string; revision: number };
+const narrationBlocks = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, pre';
+const editableOrLink = 'a, button, input, textarea, select, [contenteditable]';
+
+function epubChapterTitle(entries: OutlineEntry<string>[], href: string): string | undefined {
+  for (const entry of entries) {
+    if (entry.target.split('#', 1)[0] === href) return entry.title;
+    const childTitle = entry.children && epubChapterTitle(entry.children, href);
+    if (childTitle) return childTitle;
+  }
+}
+
+async function saveHighlight(bookId: string, selection: TextSelection) {
+  const annotations = await window.seaReader.listAnnotations(bookId);
+  const note = annotations.find(annotation => annotation.position === selection.position)?.note ?? '';
+  await window.seaReader.saveAnnotation(bookId, selection.position, selection.quotation, note);
+  return window.seaReader.listAnnotations(bookId);
+}
 
 export function EpubReader({ preview, title, bytes, id, initialPosition, appearance }: ReaderProps & { appearance: Appearance }) {
   const tr = useTranslation();
+  const openReaderPanel = useReaderPanel();
   const container = useRef<HTMLDivElement>(null);
   const rendition = useRef<Rendition | null>(null);
   const bookRef = useRef<ReturnType<typeof ePub> | null>(null);
@@ -57,8 +80,14 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
   useEffect(() => () => listeningRequest.current?.abort(), [id]);
   const [ready, setReady] = useState(false);
   const [selection, setSelection] = useState<TextSelection>();
+  const [annotationSelection, setAnnotationSelection] = useState<TextSelection>();
+  const [translationRequest, setTranslationRequest] = useState<TranslationRequest>();
+  const [narrationMenu, setNarrationMenu] = useState<NarrationMenuPosition & { cfi: string }>();
+  const [returnPosition, setReturnPosition] = useState<string>();
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [contents, setContents] = useState<OutlineEntry<string>[]>([]);
+  const [spine, setSpine] = useState<{ index: number; href: string }[]>([]);
+  const [location, setLocation] = useState<Location>();
 
   useEffect(() => {
     const key = 'epub-position:' + id;
@@ -74,13 +103,61 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
       manager: continuous ? 'continuous' : 'default',
       flow: continuous ? 'scrolled-doc' : 'paginated', defaultDirection: loadPageTurning().direction
     });
+    view.on('displayError', reportOpenFailure);
     rendition.current = view;
-    view.hooks.content.register((contents: { document: Document }) => {
+    view.hooks.content.register((contents: Contents) => {
+      // A short last chapter needs enough room below it to reach the top of the scrolling viewport.
+      if (continuous && contents.sectionIndex === book.spine.last()?.index) {
+        const padding = (container.current?.clientHeight ?? 0) - contents.textHeight();
+        if (padding > 0) {
+          const end = contents.document.createElement('div');
+          end.setAttribute('aria-hidden', 'true');
+          end.style.height = padding + 'px';
+          contents.content.append(end);
+          contents.emit('expand');
+        }
+      }
+      function showNarrationAt(caret: Range, x: number, y: number) {
+        const frame = contents.window.frameElement as HTMLElement | null;
+        if (!frame || !active) return false;
+        try {
+          const box = frame.getBoundingClientRect();
+          setNarrationMenu({
+            cfi: contents.cfiFromRange(caret), x: box.left + x, y: box.top + y,
+            restoreFocus: () => (frame.isConnected ? frame : container.current)?.focus({ preventScroll: true })
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      contents.document.addEventListener('pointerdown', () => { if (active) setNarrationMenu(undefined); });
+      contents.document.addEventListener('contextmenu', event => {
+        if (event.defaultPrevented) return;
+        const target = event.target as Element | null;
+        const block = target?.closest?.(narrationBlocks);
+        if (!block || target?.closest(editableOrLink)) return;
+        const caret = textCursorAtPoint(contents.document, event.clientX, event.clientY);
+        if (caret && block.contains(caret.startContainer) && showNarrationAt(caret, event.clientX, event.clientY)) {
+          event.preventDefault();
+        }
+      });
       contents.document.addEventListener('keydown', event => {
         if (event.defaultPrevented) return;
-        if (event.ctrlKey && event.key.toLowerCase() === 'f') {
-          event.preventDefault();
-          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, cancelable: true }));
+        if (narrationMenuKey(event)) {
+          const target = event.target as Element | null;
+          if (target?.closest?.(editableOrLink)) return;
+          const caret = keyboardTextCursor(target?.closest?.(narrationBlocks) ?? contents.content);
+          if (caret) {
+            const box = caret.getBoundingClientRect();
+            if (showNarrationAt(caret, box.left, box.bottom)) event.preventDefault();
+          }
+          return;
+        }
+        if ((event.ctrlKey && event.key.toLowerCase() === 'f') || event.key === 'Escape') {
+          const forwarded = new KeyboardEvent('keydown', { key: event.key, ctrlKey: event.ctrlKey, cancelable: true });
+          if (!window.dispatchEvent(forwarded)) event.preventDefault();
           return;
         }
         const delta = continuous ? 0 : pageKeyDelta(event, loadPageTurning());
@@ -88,6 +165,9 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
           event.preventDefault();
           void (delta < 0 ? view.prev() : view.next()).catch(() => {});
         }
+      });
+      contents.document.addEventListener('pointerup', () => {
+        if (active && contents.document.getSelection()?.isCollapsed) setSelection(undefined);
       });
     });
     view.on('selected', (position: string, contents: { window: Window }) => {
@@ -99,9 +179,11 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
     }).catch(() => {
       if (active) setError('无法读取标注。');
     });
-    view.on('relocated', (location: {start: {cfi: string}}) => {
-      if (!active) return;
+    view.on('relocated', (location: Location) => {
+      if (!active || !location.start?.cfi) return;
+      if (lastCfi.current !== location.start.cfi) setSelection(undefined);
       lastCfi.current = location.start.cfi;
+      setLocation(location);
       if (!preview) void window.seaReader.savePosition(id, location.start.cfi).catch(() => setError('无法保存阅读位置。'));
     });
     async function open() {
@@ -114,7 +196,14 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
         } else {
           await view.display();
         }
-        if (active) setReady(true);
+        if (active) {
+          const sections: { index: number; href: string }[] = [];
+          book.spine.each((section: Section) => {
+            if (section.linear) sections.push({ index: section.index, href: section.href });
+          });
+          setSpine(sections);
+          setReady(true);
+        }
       } catch {
         reportOpenFailure();
       }
@@ -126,11 +215,25 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
     return () => {
       active = false;
       book.off('openFailed', reportOpenFailure);
+      view.off('displayError', reportOpenFailure);
       rendition.current = null;
       bookRef.current = null;
       book.destroy();
     };
   }, [bytes, id, continuous, preview]);
+
+  useEffect(() => {
+    const element = container.current;
+    const view = rendition.current;
+    if (!element || !view || !ready) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.floor(entry.contentRect.width);
+      const height = Math.floor(entry.contentRect.height);
+      if (width > 0 && height > 0 && view.location?.start) view.resize(width, height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ready]);
 
   useEffect(() => {
     const view = rendition.current;
@@ -183,7 +286,7 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
         const root = await section.load(book.load.bind(book));
         if (request.signal.aborted) return;
         const body = root.querySelector('body') ?? root;
-        const candidates = Array.from(body.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, blockquote, pre'));
+        const candidates = Array.from(body.querySelectorAll(narrationBlocks));
         const blocks = candidates.filter(block => !candidates.some(other => other !== block && block.contains(other)));
         const chapterStart = parts.length;
         for (const block of blocks.length ? blocks : [body]) {
@@ -241,51 +344,103 @@ export function EpubReader({ preview, title, bytes, id, initialPosition, appeara
     return results;
   }
 
-  return <div onKeyDown={event => {
+  const chapterIndex = location ? spine.findIndex(section => section.index === location.start.index) : -1;
+  const positionLabel = chapterIndex >= 0
+    ? tr('章', 'Chapter', '章') + ' ' + (chapterIndex + 1) + ' / ' + spine.length
+    : tr('正在读取…', 'Loading…', '読み込み中…');
+  const chapterTitle = location && epubChapterTitle(contents, location.start.href);
+
+  function step(delta: number) {
+    const view = rendition.current;
+    if (!view) return;
+    setSelection(undefined);
+    void (delta < 0 ? view.prev() : view.next()).catch(() => setError('无法翻页。'));
+  }
+
+  function jumpTo(target: string, remember = true) {
+    const view = rendition.current;
+    if (!view) return;
+    const origin = lastCfi.current;
+    void view.display(target).then(() => {
+      setSelection(undefined);
+      setReturnPosition(remember ? origin : undefined);
+      openReaderPanel();
+    }).catch(() => setError('无法跳转到此位置。'));
+  }
+
+  return <div className="epub-reader" onKeyDown={event => {
     if (!ready || continuous) return;
     const delta = pageKeyDelta(event.nativeEvent, loadPageTurning());
-    if (delta < 0) void rendition.current?.prev();
-    if (delta > 0) void rendition.current?.next();
-    if (delta) event.preventDefault();
+    if (delta) {
+      event.preventDefault();
+      step(delta);
+    }
   }}>
     {error && <p role="alert">{error}</p>}
-    <div className="reader-controls">
-      <button disabled={!ready} onClick={() => void rendition.current?.prev()}>{tr('上一页', 'Previous page', '前のページ')}</button>
-      <button disabled={!ready} onClick={() => void rendition.current?.next()}>{tr('下一页', 'Next page', '次のページ')}</button>
-      <label>{tr('阅读方式', 'Reading mode', '閲覧モード')} <select value={continuous ? 'scroll' : 'page'} disabled={!ready} onChange={event => {
-        const scrolling = event.target.value === 'scroll';
-        savePreference('epub-reading-mode', event.target.value);
+    <ReaderSlot name="paging">
+      <button disabled={!ready || Boolean(location?.atStart)} onClick={() => step(-1)}
+        aria-label={tr('上一页', 'Previous page', '前のページ')}>‹</button>
+      <input type="range" min={0} max={Math.max(0, spine.length - 1)} value={Math.max(0, chapterIndex)}
+        disabled={!ready || spine.length <= 1} aria-label={tr('阅读位置', 'Reading position', '読書位置')}
+        aria-valuetext={positionLabel} onChange={event => {
+          const chapter = spine[Number(event.target.value)];
+          if (chapter) jumpTo(chapter.href);
+        }} />
+      <output title={chapterTitle}>{positionLabel}</output>
+      <button disabled={!ready || Boolean(location?.atEnd)} onClick={() => step(1)}
+        aria-label={tr('下一页', 'Next page', '次のページ')}>›</button>
+    </ReaderSlot>
+    <ReaderSlot name="focusProgress">{positionLabel}</ReaderSlot>
+    <ReaderSlot name="flow">
+      <button disabled={!ready} aria-pressed={continuous} onClick={() => {
+        savePreference('epub-reading-mode', continuous ? 'page' : 'scroll');
         setReady(false);
         setSelection(undefined);
         setError('');
-        setContinuous(scrolling);
-      }}>
-        <option value="page">{tr('左右翻页', 'Pages', 'ページ送り')}</option><option value="scroll">{tr('上下滚动', 'Continuous scroll', '連続スクロール')}</option>
-      </select></label>
-    </div>
-    <details className="contents">
-      <summary>{tr('目录', 'Contents', '目次')}</summary>
-      <Outline entries={contents} onSelect={target => {
-        void rendition.current?.display(target).catch(() => setError('无法打开此目录位置。'));
-      }} />
-    </details>
-    <button disabled={!ready || preparing} onClick={() => void listen()}>{preparing ? tr('正在准备听书…', 'Preparing narration…', '読み上げを準備中…') : tr('听书', 'Listen', '読み上げ')}</button>
-    {ready && selection && <div className="reader-controls">
-      <button disabled={preparing} onClick={() => void listen(selection.position)}>{tr('从这里听起', 'Read from here', 'ここから読み上げ')}</button>
-      <button disabled={preparing} onClick={() => void listen(selection.position, true)}>{tr('从本段听起', 'Read from this paragraph', 'この段落から読み上げ')}</button>
-    </div>}
-    {ready && <OcrPanel selectedText={selection?.quotation} />}
-    {ready && !preview && <Annotations bookId={id} items={annotations} selection={selection} onChange={setAnnotations} onJump={target => {
-      void rendition.current?.display(target).catch(() => setError('无法跳转到此标注。'));
-    }} />}
-    {ready && <ReaderSearch search={search} onSelect={target => {
-      void rendition.current?.display(target).catch(() => setError('无法跳转到此结果。'));
-    }} />}
-    <div ref={container} className="epub-view" aria-label={tr('EPUB 正文', 'EPUB text', 'EPUB 本文')} />
+        setContinuous(!continuous);
+      }}>{continuous ? tr('上下滚动', 'Continuous scroll', '連続スクロール') : tr('左右翻页', 'Pages', 'ページ送り')}</button>
+    </ReaderSlot>
+    <ReaderSlot name="navigation">
+      <Outline entries={contents} onSelect={jumpTo} />
+      {ready && !preview && <Annotations bookId={id} items={annotations} selection={annotationSelection} onChange={setAnnotations} onJump={jumpTo} />}
+    </ReaderSlot>
+    <ReaderSlot name="listen">
+      <button disabled={!ready || preparing} onClick={() => void listen()}>{preparing ? tr('正在准备听书…', 'Preparing narration…', '読み上げを準備中…') : tr('听书', 'Listen', '読み上げ')}</button>
+    </ReaderSlot>
+    <ReaderSlot name="selection">
+      {(ready && selection || returnPosition) && <div className="reader-controls">
+        {ready && selection && <>
+          <button onClick={() => {
+            setTranslationRequest(current => ({ text: selection.quotation, revision: (current?.revision ?? 0) + 1 }));
+            openReaderPanel('tools');
+          }}>{tr('翻译选中文字', 'Translate selection', '選択した文字を翻訳')}</button>
+          <button disabled={preparing} onClick={() => void listen(selection.position)}>{tr('从这里听起', 'Read from here', 'ここから読み上げ')}</button>
+          <button disabled={preparing} onClick={() => void listen(selection.position, true)}>{tr('从本段听起', 'Read from this paragraph', 'この段落から読み上げ')}</button>
+          {!preview && <>
+            <button onClick={() => void saveHighlight(id, selection).then(setAnnotations, () => setError('无法保存标注。'))}>{tr('划线', 'Highlight', 'ハイライト')}</button>
+            <button onClick={() => { setAnnotationSelection(selection); openReaderPanel('navigation'); }}>{tr('笔记', 'Note', 'メモ')}</button>
+          </>}
+        </>}
+        {returnPosition && <button onClick={() => jumpTo(returnPosition, false)}>{tr('返回原位置', 'Return to previous position', '元の位置へ戻る')}</button>}
+      </div>}
+    </ReaderSlot>
+    <ReaderSlot name="tools">{ready && <OcrPanel translationRequest={translationRequest} />}</ReaderSlot>
+    <ReaderSlot name="search">{ready && <ReaderSearch search={search} onSelect={jumpTo} />}</ReaderSlot>
+    {narrationMenu && <NarrationContextMenu position={narrationMenu} onClose={() => setNarrationMenu(undefined)}
+      onHere={() => void listen(narrationMenu.cfi)} onParagraph={() => void listen(narrationMenu.cfi, true)} />}
+    <div ref={container} className="epub-view" tabIndex={0} aria-label={tr('EPUB 正文', 'EPUB text', 'EPUB 本文')} />
   </div>;
 }
 
-type PdfSelection = TextSelection & { page: number; prefixCharacters: number };
+type PdfListeningPosition = { page: number; prefixCharacters: number };
+type PdfSelection = TextSelection & PdfListeningPosition;
+
+function pdfPrefixCharacters(element: HTMLElement, range: Range) {
+  const prefix = range.cloneRange();
+  prefix.selectNodeContents(element);
+  prefix.setEnd(range.startContainer, range.startOffset);
+  return prefix.toString().replace(/\s/gu, '').length;
+}
 
 function offsetForPdfSelection(text: string, prefixCharacters: number) {
   let remaining = prefixCharacters;
@@ -308,13 +463,14 @@ function readPdfMark(position: string): PdfMark | undefined {
   } catch { /* Ignore malformed marks. */ }
 }
 
-function PdfCanvas({ document, page, zoom, size, onError, onSelection, annotations }: {
+function PdfCanvas({ document, page, zoom, size, onError, onSelection, onNarrationMenu, annotations }: {
   document: PDFDocumentProxy;
   page: number;
   zoom: string;
   size: { width: number; height: number };
   onError: (message: string) => void;
-  onSelection: (selection: PdfSelection) => void;
+  onSelection: (selection: PdfSelection | undefined) => void;
+  onNarrationMenu: (menu: NarrationMenuPosition & PdfListeningPosition) => void;
   annotations: Annotation[];
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -353,7 +509,10 @@ function PdfCanvas({ document, page, zoom, size, onError, onSelection, annotatio
   function capture() {
     const element = text.current;
     const selection = window.getSelection();
-    if (!element || !selection?.rangeCount || selection.isCollapsed) return;
+    if (!element || !selection?.rangeCount || selection.isCollapsed) {
+      onSelection(undefined);
+      return;
+    }
     const range = selection.getRangeAt(0);
     if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return;
     const box = element.getBoundingClientRect();
@@ -368,17 +527,37 @@ function PdfCanvas({ document, page, zoom, size, onError, onSelection, annotatio
     if (position.length > 4096) {
       onError('选区过长，请分段标注。');
     } else if (quotation && rects.length) {
-      const prefix = range.cloneRange();
-      prefix.selectNodeContents(element);
-      prefix.setEnd(range.startContainer, range.startOffset);
-      const prefixCharacters = prefix.toString().replace(/\s/gu, '').length;
+      const prefixCharacters = pdfPrefixCharacters(element, range);
       onSelection({ position, quotation, page, prefixCharacters });
     }
   }
 
   return <div className="pdf-sheet">
     <canvas ref={canvas} aria-label={'PDF 第 ' + page + ' 页'} />
-    <div ref={text} className="textLayer" tabIndex={0} aria-label={'第 ' + page + ' 页正文'} onPointerUp={capture} onKeyUp={capture} />
+    <div ref={text} className="textLayer" tabIndex={0} aria-label={'第 ' + page + ' 页正文'} onPointerUp={capture} onKeyUp={capture}
+      onContextMenu={event => {
+        const target = (event.target as Element).closest('.textLayer span');
+        const layer = event.currentTarget;
+        if (!target || !layer.contains(target)) return;
+        const caret = textCursorAtPoint(layer.ownerDocument, event.clientX, event.clientY);
+        if (!caret || !target.contains(caret.startContainer)) return;
+        event.preventDefault();
+        onNarrationMenu({
+          x: event.clientX, y: event.clientY, page, prefixCharacters: pdfPrefixCharacters(layer, caret),
+          restoreFocus: () => layer.focus({ preventScroll: true })
+        });
+      }} onKeyDown={event => {
+        if (!narrationMenuKey(event)) return;
+        const layer = event.currentTarget;
+        const caret = keyboardTextCursor(layer);
+        if (!caret) return;
+        event.preventDefault();
+        const box = caret.getBoundingClientRect();
+        onNarrationMenu({
+          x: box.left, y: box.bottom, page, prefixCharacters: pdfPrefixCharacters(layer, caret),
+          restoreFocus: () => layer.focus({ preventScroll: true })
+        });
+      }} />
     <div className="pdf-marks" aria-hidden="true">
       {annotations.flatMap(item => {
         const mark = readPdfMark(item.position);
@@ -391,6 +570,7 @@ function PdfCanvas({ document, page, zoom, size, onError, onSelection, annotatio
 }
 export function PdfReader({ preview, title, bytes, id, initialPosition }: ReaderProps) {
   const tr = useTranslation();
+  const openReaderPanel = useReaderPanel();
   const surface = useRef<HTMLDivElement>(null);
   const key = 'pdf-position:' + id;
   const [recognized, setRecognized] = useState<Record<number, string>>({});
@@ -404,6 +584,10 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
     return () => { active = false; };
   }, [id]);
   const [selection, setSelection] = useState<PdfSelection>();
+  const [annotationSelection, setAnnotationSelection] = useState<TextSelection>();
+  const [translationRequest, setTranslationRequest] = useState<TranslationRequest>();
+  const [narrationMenu, setNarrationMenu] = useState<NarrationMenuPosition & PdfListeningPosition>();
+  const [returnPage, setReturnPage] = useState<number>();
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   useEffect(() => {
     let active = true;
@@ -423,14 +607,21 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
   const stride = Math.max(280, size.height + 16);
   const trackedPage = useRef(page);
   trackedPage.current = page;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (continuous && surface.current) surface.current.scrollTop = (trackedPage.current - 1) * stride;
   }, [continuous, stride, document]);
   function navigate(target: number, scroll = continuous) {
     if (!document) return;
     const next = Math.max(1, Math.min(target, document.numPages));
     if (surface.current) surface.current.scrollTop = scroll ? (next - 1) * stride : 0;
+    setSelection(undefined);
+    if (next !== page) setTranslationRequest(undefined);
     setPage(next);
+  }
+  function jumpTo(target: number) {
+    if (target !== page) setReturnPage(page);
+    navigate(target);
+    openReaderPanel();
   }
   useEffect(() => {
     const element = surface.current;
@@ -446,7 +637,7 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
     if (!document) return;
     function turn(event: KeyboardEvent) {
       const delta = pageKeyDelta(event, loadPageTurning());
-      if (!delta || !document) return;
+      if (!delta || surface.current?.closest('[inert]')) return;
       event.preventDefault();
       navigate(page + delta);
     }
@@ -479,7 +670,7 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
     if (!document) return;
     if (!preview) void window.seaReader.savePosition(id, String(page)).catch(() => setError('无法保存阅读位置。'));
   }, [document, page, id]);
-  async function listen(from?: PdfSelection, fromParagraph = false) {
+  async function listen(from?: PdfListeningPosition, fromParagraph = false) {
     if (!document || preparing) return;
     const request = new AbortController();
     listeningRequest.current = request;
@@ -536,25 +727,56 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
     }
   }
 
+  const positionLabel = document
+    ? tr('页', 'Page', 'ページ') + ' ' + page + ' / ' + document.numPages
+    : tr('正在读取…', 'Loading…', '読み込み中…');
+  const activeSelection = selection?.page === page ? selection : undefined;
+
   return <>
     {error && <p role="alert">{error}</p>}
-    <button disabled={!document || preparing} onClick={() => void listen()}>{preparing ? tr('正在准备听书…', 'Preparing narration…', '読み上げを準備中…') : tr('听书', 'Listen', '読み上げ')}</button>
-    {selection?.page === page && <div className="reader-controls">
-      <button disabled={preparing} onClick={() => void listen(selection)}>{tr('从这里听起', 'Read from here', 'ここから読み上げ')}</button>
-      <button disabled={preparing} onClick={() => void listen(selection, true)}>{tr('从本行听起', 'Read from this line', 'この行から読み上げ')}</button>
-    </div>}
-    <div className="reader-controls">
-      <button disabled={!document || page <= 1} onClick={() => navigate(page - 1)}>{tr('上一页', 'Previous page', '前のページ')}</button>
-      <output>{document ? page + ' / ' + document.numPages : tr('正在读取…', 'Loading…', '読み込み中…')}</output>
-      <button disabled={!document || page >= document.numPages} onClick={() => navigate(page + 1)}>{tr('下一页', 'Next page', '次のページ')}</button>
-      <label>{tr('阅读方式', 'Reading mode', '閲覧モード')} <select value={continuous ? 'scroll' : 'page'} onChange={event => {
-        const scrolling = event.target.value === 'scroll';
-        setContinuous(scrolling);
-        savePreference('pdf-reading-mode', scrolling ? 'scroll' : 'page');
-        if (!scrolling && surface.current) surface.current.scrollTop = 0;
-      }}>
-        <option value="page">{tr('左右翻页', 'Pages', 'ページ送り')}</option><option value="scroll">{tr('上下滚动', 'Continuous scroll', '連続スクロール')}</option>
-      </select></label>
+    <ReaderSlot name="listen">
+      <button disabled={!document || preparing} onClick={() => void listen()}>{preparing ? tr('正在准备听书…', 'Preparing narration…', '読み上げを準備中…') : tr('听书', 'Listen', '読み上げ')}</button>
+    </ReaderSlot>
+    <ReaderSlot name="selection">
+      {(activeSelection || returnPage) && <div className="reader-controls">
+        {activeSelection && <>
+          <button onClick={() => {
+            setTranslationRequest(current => ({ text: activeSelection.quotation, revision: (current?.revision ?? 0) + 1 }));
+            openReaderPanel('tools');
+          }}>{tr('翻译选中文字', 'Translate selection', '選択した文字を翻訳')}</button>
+          <button disabled={preparing} onClick={() => void listen(activeSelection)}>{tr('从这里听起', 'Read from here', 'ここから読み上げ')}</button>
+          <button disabled={preparing} onClick={() => void listen(activeSelection, true)}>{tr('从本行听起', 'Read from this line', 'この行から読み上げ')}</button>
+          {!preview && <>
+            <button onClick={() => void saveHighlight(id, activeSelection).then(setAnnotations, () => setError('无法保存标注。'))}>{tr('划线', 'Highlight', 'ハイライト')}</button>
+            <button onClick={() => { setAnnotationSelection(activeSelection); openReaderPanel('navigation'); }}>{tr('笔记', 'Note', 'メモ')}</button>
+          </>}
+        </>}
+        {returnPage && <button onClick={() => { navigate(returnPage); setReturnPage(undefined); }}>{tr('返回原位置', 'Return to previous position', '元の位置へ戻る')}</button>}
+      </div>}
+    </ReaderSlot>
+    <ReaderSlot name="paging">
+      <button disabled={!document || page <= 1} onClick={() => navigate(page - 1)}
+        aria-label={tr('上一页', 'Previous page', '前のページ')}>‹</button>
+      <input type="range" min={1} max={document?.numPages ?? 1} value={page}
+        disabled={!document || document.numPages <= 1} aria-label={tr('阅读位置', 'Reading position', '読書位置')}
+        aria-valuetext={positionLabel} onChange={event => {
+          setReturnPage(current => current ?? page);
+          navigate(Number(event.target.value));
+        }} />
+      <output>{positionLabel}</output>
+      <button disabled={!document || page >= document.numPages} onClick={() => navigate(page + 1)}
+        aria-label={tr('下一页', 'Next page', '次のページ')}>›</button>
+    </ReaderSlot>
+    <ReaderSlot name="focusProgress">{positionLabel}</ReaderSlot>
+    <ReaderSlot name="flow">
+      <button disabled={!document} aria-pressed={continuous} onClick={() => {
+        setContinuous(!continuous);
+        setSelection(undefined);
+        savePreference('pdf-reading-mode', continuous ? 'page' : 'scroll');
+        if (continuous && surface.current) surface.current.scrollTop = 0;
+      }}>{continuous ? tr('上下滚动', 'Continuous scroll', '連続スクロール') : tr('左右翻页', 'Pages', 'ページ送り')}</button>
+    </ReaderSlot>
+    <ReaderSlot name="appearance">
       <label>{tr('缩放', 'Zoom', '拡大率')} <select value={continuous ? 'page' : zoom} disabled={continuous} onChange={event => setZoom(event.target.value)}>
         <option value="width">{tr('适宽', 'Fit width', '幅に合わせる')}</option>
         <option value="page">{tr('适页', 'Fit page', 'ページに合わせる')}</option>
@@ -562,18 +784,25 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
           <option key={value} value={value}>{value * 100}%</option>
         )}
       </select></label>
-    </div>
-    <details className="contents">
-      <summary>{tr('目录', 'Contents', '目次')}</summary>
+    </ReaderSlot>
+    <ReaderSlot name="navigation">
+      {document && <form className="reader-controls" onSubmit={event => {
+        event.preventDefault();
+        const target = Number(new FormData(event.currentTarget).get('page'));
+        if (Number.isSafeInteger(target) && target >= 1 && target <= document.numPages) jumpTo(target);
+      }}>
+        <label>{tr('页码', 'Page number', 'ページ番号')} <input type="number" name="page" required min={1} max={document.numPages} key={page} defaultValue={page} /></label>
+        <button>{tr('跳转', 'Go', '移動')}</button>
+      </form>}
       <Outline entries={contents} onSelect={async target => {
         if (!document || !target) return;
         try {
           const destination = typeof target === 'string' ? await document.getDestination(target) : target;
           const ref = destination?.[0];
-          if (typeof ref === 'number') navigate(ref + 1);
+          if (typeof ref === 'number') jumpTo(ref + 1);
           else if (ref && typeof ref === 'object' && 'num' in ref && 'gen' in ref &&
                    typeof ref.num === 'number' && typeof ref.gen === 'number') {
-            navigate(await document.getPageIndex({ num: ref.num, gen: ref.gen }) + 1);
+            jumpTo(await document.getPageIndex({ num: ref.num, gen: ref.gen }) + 1);
           } else {
             setError('无法打开此目录位置。');
           }
@@ -581,12 +810,12 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
           setError('无法打开此目录位置。');
         }
       }} />
-    </details>
-    {document && !preview && <Annotations bookId={id} items={annotations} selection={selection} onChange={setAnnotations} onJump={position => {
-      const mark = readPdfMark(position);
-      if (mark) navigate(mark.page);
-    }} />}
-    {document && <OcrPanel key={page} selectedText={readPdfMark(selection?.position ?? '')?.page === page ? selection?.quotation : undefined} saved={recognized[page]} capture={async () => {
+      {document && !preview && <Annotations bookId={id} items={annotations} selection={annotationSelection} onChange={setAnnotations} onJump={position => {
+        const mark = readPdfMark(position);
+        if (mark) jumpTo(mark.page);
+      }} />}
+    </ReaderSlot>
+    <ReaderSlot name="tools">{document && <OcrPanel key={page} translationRequest={translationRequest} saved={recognized[page]} capture={async () => {
       const pdfPage = await document.getPage(page);
       const original = pdfPage.getViewport({ scale: 1 });
       const viewport = pdfPage.getViewport({ scale: Math.min(2.5, 3000 / Math.max(original.width, original.height)) });
@@ -600,8 +829,8 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
     }} onSave={preview ? undefined : async text => {
       await window.seaReader.saveRecognizedPage(id, page, text);
       setRecognized(current => ({ ...current, [page]: text }));
-    }} />}
-    {document && <ReaderSearch onSelect={navigate} search={async (query, signal) => {
+    }} />}</ReaderSlot>
+    <ReaderSlot name="search">{document && <ReaderSearch onSelect={jumpTo} search={async (query, signal) => {
       const results: SearchHit<number>[] = [];
       for (let number = 1; number <= document.numPages && results.length < searchLimit; number++) {
         if (signal.aborted) break;
@@ -615,20 +844,28 @@ export function PdfReader({ preview, title, bytes, id, initialPosition }: Reader
         });
       }
       return results;
-    }} />}
-    <div className="pdf-view" ref={surface} tabIndex={0} aria-label={tr('PDF 阅读区', 'PDF reading area', 'PDF 読書領域')} onScroll={event => {
+    }} />}</ReaderSlot>
+    {narrationMenu && <NarrationContextMenu position={narrationMenu} onClose={() => setNarrationMenu(undefined)}
+      onHere={() => void listen(narrationMenu)} onParagraph={() => void listen(narrationMenu, true)}
+      paragraphLabel={tr('从本行听起', 'Read from this line', 'この行から読み上げ')} />}
+    <div className="pdf-view" ref={surface} tabIndex={0} style={continuous ? { overflowAnchor: 'none' } : undefined}
+      aria-label={tr('PDF 阅读区', 'PDF reading area', 'PDF 読書領域')} onScroll={event => {
       if (!continuous || !document) return;
-      const target = Math.floor((event.currentTarget.scrollTop + Math.min(120, stride / 2)) / stride) + 1;
-      setPage(Math.min(document.numPages, target));
+      const target = Math.min(document.numPages,
+        Math.floor((event.currentTarget.scrollTop + Math.min(120, stride / 2)) / stride) + 1);
+      if (target !== page) setTranslationRequest(undefined);
+      setPage(target);
     }}>
       {document && (continuous ? <div className="pdf-scroll-track" style={{ height: document.numPages * stride }}>
         {Array.from({ length: Math.min(document.numPages, page + 2) - Math.max(1, page - 2) + 1 }, (_, index) => {
           const number = Math.max(1, page - 2) + index;
           return <div className="pdf-scroll-slot" key={number} style={{ top: (number - 1) * stride, height: stride }}>
-            <PdfCanvas document={document} page={number} zoom="page" size={size} onError={setError} onSelection={setSelection} annotations={annotations} />
+            <PdfCanvas document={document} page={number} zoom="page" size={size} onError={setError} onSelection={setSelection}
+              onNarrationMenu={setNarrationMenu} annotations={annotations} />
           </div>;
         })}
-      </div> : <PdfCanvas document={document} page={page} zoom={zoom} size={size} onError={setError} onSelection={setSelection} annotations={annotations} />)}
+      </div> : <PdfCanvas document={document} page={page} zoom={zoom} size={size} onError={setError} onSelection={setSelection}
+        onNarrationMenu={setNarrationMenu} annotations={annotations} />)}
     </div>
   </>;
 }

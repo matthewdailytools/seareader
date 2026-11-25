@@ -17,14 +17,12 @@ export function TranslationPanel({ seed }: { seed?: string }) {
   const [result, setResult] = useState('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
-  const panel = useRef<HTMLDetailsElement>(null);
   const job = useRef<string | null>(null);
 
   useEffect(() => {
     if (!seed) return;
     setText(seed.slice(0, 6000));
     setResult('');
-    if (panel.current) panel.current.open = true;
   }, [seed]);
 
   useEffect(() => () => {
@@ -52,8 +50,7 @@ export function TranslationPanel({ seed }: { seed?: string }) {
     }
   }
 
-  return <details className="contents" ref={panel}>
-    <summary>{tr('离线翻译', 'Offline translation', 'オフライン翻訳')}</summary>
+  return <div className="contents">
     <div className="reader-controls">
       <label>{tr('原文语言', 'Source language', '原文の言語')} <select value={source} disabled={busy} onChange={event => setSource(event.target.value as TextLanguage | 'auto')}>
         <option value="auto">{tr('自动识别', 'Detect automatically', '自動検出')}</option>
@@ -81,5 +78,5 @@ export function TranslationPanel({ seed }: { seed?: string }) {
       <button onClick={() => setResult('')}>{tr('清空译文', 'Clear translation', '訳文を消去')}</button>
     </>}
     {status && <p role="status">{status}</p>}
-  </details>;
+  </div>;
 }

@@ -12,24 +12,9 @@ export function ReaderSearch<T>({ search, onSelect }: {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit<T>[]>();
   const [status, setStatus] = useState('');
-  const input = useRef<HTMLInputElement>(null);
-  const panel = useRef<HTMLDetailsElement>(null);
   const pending = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (!(event.ctrlKey && event.key.toLowerCase() === 'f')) return;
-      event.preventDefault();
-      if (panel.current) panel.current.open = true;
-      input.current?.focus();
-      input.current?.select();
-    }
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      pending.current?.abort();
-    };
-  }, []);
+  useEffect(() => () => pending.current?.abort(), []);
 
   async function run() {
     pending.current?.abort();
@@ -43,16 +28,17 @@ export function ReaderSearch<T>({ search, onSelect }: {
       const results = await search(value, request.signal);
       if (request.signal.aborted) return;
       setHits(results);
-      setStatus(results.length ? '找到 ' + results.length + (results.length === searchLimit ? '+ 个结果' : ' 个结果') : tr('没有匹配结果。', 'No matches.', '一致する項目がありません。'));
+      const count = results.length + (results.length === searchLimit ? '+' : '');
+      setStatus(results.length ? tr('找到 ' + count + ' 个结果', count + ' matches', count + ' 件の結果') :
+        tr('没有匹配结果。', 'No matches.', '一致する項目がありません。'));
     } catch {
       if (!request.signal.aborted) setStatus(tr('无法搜索此书。', 'Could not search this book.', 'この本を検索できませんでした。'));
     }
   }
 
-  return <details ref={panel} className="contents">
-    <summary>{tr('查找', 'Find', '検索')}</summary>
+  return <div className="contents">
     <form className="reader-controls" onSubmit={event => { event.preventDefault(); void run(); }}>
-      <input ref={input} type="search" aria-label={tr('搜索正文', 'Search text', '本文を検索')} value={query} onChange={event => {
+      <input type="search" aria-label={tr('搜索正文', 'Search text', '本文を検索')} value={query} onChange={event => {
         pending.current?.abort();
         setQuery(event.target.value);
         setHits(undefined);
@@ -64,7 +50,7 @@ export function ReaderSearch<T>({ search, onSelect }: {
     {hits?.length ? <ul>{hits.map((hit, index) => <li key={index}>
       <button onClick={() => onSelect(hit.target)}>{hit.excerpt}</button>
     </li>)}</ul> : null}
-  </details>;
+  </div>;
 }
 
 export function textExcerpt(text: string, index: number, length: number) {

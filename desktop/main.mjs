@@ -125,7 +125,10 @@ else app.whenReady().then(async () => {
   }
 
   registerOcr(register, database, requireBook);
-  registerSpeech(register);
+  const japaneseVoiceAssets = app.isPackaged
+    ? join(process.resourcesPath, 'japanese-voice')
+    : fileURLToPath(new URL('../voice-assets', import.meta.url));
+  registerSpeech(register, join(app.getPath('userData'), 'speech-voices'), japaneseVoiceAssets);
   register('speech:settings', () => shell.openExternal('ms-settings:regionlanguage'));
   registerTranslation(register, join(app.getPath('userData'), 'translation-models'));
   registerFeeds(register, database, url => shell.openExternal(url));

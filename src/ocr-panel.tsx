@@ -3,10 +3,10 @@ import { TranslationPanel } from './translation-panel';
 import { speechParts, useListening } from './listening';
 import { useEffect, useRef, useState } from 'react';
 
-export function OcrPanel({ capture, saved, onSave, selectedText }: {
+export function OcrPanel({ capture, saved, onSave, translationRequest }: {
   capture?: () => Promise<Blob>;
   saved?: string;
-  selectedText?: string;
+  translationRequest?: { text: string; revision: number };
   onSave?: (text: string) => Promise<void>;
 }) {
   const tr = useTranslation();
@@ -17,9 +17,19 @@ export function OcrPanel({ capture, saved, onSave, selectedText }: {
   const [text, setText] = useState(saved ?? '');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
-  const [translationSeed, setTranslationSeed] = useState<{ text: string; revision: number }>();
+  const [tool, setTool] = useState<'ocr' | 'translation'>(capture ? 'ocr' : 'translation');
+  const [translationSeed, setTranslationSeed] = useState({ text: '', revision: 0 });
   const job = useRef<string | null>(null);
   const [recognizing, setRecognizing] = useState(false);
+
+  function translate(value: string) {
+    setTranslationSeed(current => ({ text: value, revision: current.revision + 1 }));
+    setTool('translation');
+  }
+
+  useEffect(() => {
+    if (translationRequest) translate(translationRequest.text);
+  }, [translationRequest]);
 
   useEffect(() => () => {
     if (job.current) void window.seaReader.cancelRecognition(job.current).catch(() => {});
@@ -75,11 +85,11 @@ export function OcrPanel({ capture, saved, onSave, selectedText }: {
   }
 
   return <>
-  {selectedText && <button onClick={() => setTranslationSeed(current => ({
-    text: selectedText, revision: (current?.revision ?? 0) + 1
-  }))}>{tr('翻译选中文字', 'Translate selection', '選択した文字を翻訳')}</button>}
-  <details className="contents">
-    <summary>{tr('图片转文字', 'Image to text', '画像をテキスト化')}</summary>
+  <div className="reader-controls" role="group" aria-label={tr('工具类型', 'Tool type', 'ツールの種類')}>
+    <button aria-pressed={tool === 'ocr'} onClick={() => setTool('ocr')}>{tr('图片转文字', 'Image to text', '画像をテキスト化')}</button>
+    <button aria-pressed={tool === 'translation'} onClick={() => setTool('translation')}>{tr('翻译', 'Translation', '翻訳')}</button>
+  </div>
+  <div className="contents" hidden={tool !== 'ocr'}>
     <div className="reader-controls">
       {capture && <button disabled={busy} onClick={() => void run(async () => setImage(await capture()))}>{tr('预览当前页', 'Preview current page', '現在のページをプレビュー')}</button>}
       <label>{tr('选择图片', 'Choose image', '画像を選択')} <input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy}
@@ -102,15 +112,15 @@ export function OcrPanel({ capture, saved, onSave, selectedText }: {
     <button disabled={!text.trim() || busy || recognizing} onClick={() => startListening({
       id: '', title: tr('识别结果', 'Recognized text', '認識結果'), parts: speechParts(text)
     }, 0)}>{tr('朗读识别结果', 'Read recognized text aloud', '認識結果を読み上げる')}</button>
-    <button disabled={!text.trim() || busy || recognizing} onClick={() =>
-      setTranslationSeed(current => ({ text, revision: (current?.revision ?? 0) + 1 }))
-    }>{tr('转入翻译', 'Translate result', '認識結果を翻訳')}</button>
+    <button disabled={!text.trim() || busy || recognizing} onClick={() => translate(text)}>{tr('转入翻译', 'Translate result', '認識結果を翻訳')}</button>
     {onSave && <button disabled={busy} onClick={() => void run(async () => {
       await onSave(text);
       setStatus(tr('已保存本页文字。', 'Page text saved.', 'ページのテキストを保存しました。'));
     })}>{tr('保存到本页', 'Save to this page', 'このページに保存')}</button>}
     {(busy || recognizing || status) && <p role="status">{recognizing ? tr('正在识别…', 'Recognizing…', '認識中…') : busy ? tr('处理中…', 'Working…', '処理中…') : status}</p>}
-  </details>
-  <TranslationPanel key={translationSeed?.revision ?? 0} seed={translationSeed?.text} />
+  </div>
+  <div hidden={tool !== 'translation'}>
+    <TranslationPanel key={translationSeed.revision} seed={translationSeed.text} />
+  </div>
   </>;
 }

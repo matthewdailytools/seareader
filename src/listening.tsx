@@ -1,6 +1,6 @@
 import { savePreference } from './preferences';
 import { formatOperationError, useTranslation, detectTextLanguage } from './locale';
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 export type ListeningSource = { id: string; title: string; parts: string[]; chapters?: number[] };
 type Start = (source: ListeningSource, index?: number) => void;
@@ -63,6 +63,8 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
   const [source, setSource] = useState<ListeningSource>();
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const controlsId = useId();
   const [preferences, setPreferences] = useState(loadListeningPreferences);
   const [rate, setRate] = useState(preferences.rate);
 
@@ -72,12 +74,34 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
     savePreference('listening-preferences', JSON.stringify(value));
   }
   const [error, setError] = useState('');
-  const [missingVoice, setMissingVoice] = useState(false);
+  const [missingVoice, setMissingVoice] = useState<Exclude<SpeechLanguage, 'auto'>>();
+  const [installingVoice, setInstallingVoice] = useState(false);
   const [retry, setRetry] = useState(0);
 
   const request = useRef(0);
   const audio = useRef<HTMLAudioElement>(null);
   const [clip, setClip] = useState('');
+
+  async function installJapaneseVoice() {
+    const current = request.current;
+    setInstallingVoice(true);
+    setError('');
+    try {
+      await window.seaReader.installJapaneseVoice();
+      if (request.current === current) {
+        setRetry(value => value + 1);
+        setPlaying(true);
+      }
+    } catch {
+      if (request.current === current) setError(tr(
+        '无法安装日语离线语音，请确认磁盘空间充足且安装包完整。',
+        'Could not install the Japanese offline voice. Check available disk space and reinstall SeaReader if needed.',
+        '日本語のオフライン音声をインストールできませんでした。空き容量を確認し、必要に応じて SeaReader を再インストールしてください。'
+      ));
+    } finally {
+      setInstallingVoice(false);
+    }
+  }
 
   function start(next: ListeningSource, position?: number) {
     if (!next.parts.length) return;
@@ -115,11 +139,12 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
     let active = true;
     let url: string | undefined;
     setClip('');
-    setMissingVoice(false);
-    void window.seaReader.generateSpeech(id, text, preferences.language === 'auto' ? detectTextLanguage(text) : preferences.language).then(bytes => {
+    setMissingVoice(undefined);
+    const language = preferences.language === 'auto' ? detectTextLanguage(text) : preferences.language;
+    void window.seaReader.generateSpeech(id, text, language).then(bytes => {
       if (!active) return;
       if (bytes === null) {
-        setMissingVoice(true);
+        setMissingVoice(language);
         setPlaying(false);
         return;
       }
@@ -179,15 +204,20 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
       else { setPlaying(false); setIndex(0); }
     }} />
     {source && <aside className="listening-player" aria-label={tr('听书播放器', 'Narration player', '読み上げプレーヤー')}>
-      <strong>{source.title}</strong>
-      <div className="reader-controls">
-        {source.chapters && <button disabled={chapter <= 0} onClick={() => setIndex(source.chapters![chapter - 1])}>{tr('上一章', 'Previous chapter', '前の章')}</button>}
-        <button disabled={index <= 0} onClick={() => setIndex(index - 1)}>{tr('上一段', 'Previous passage', '前の段落')}</button>
-        <button onClick={() => {
+      <div className="listening-summary">
+        <div><strong>{source.title}</strong><small>{index + 1} / {source.parts.length}</small></div>
+        <button className="primary" disabled={Boolean(missingVoice) && installingVoice} onClick={() => {
           setError('');
           if (missingVoice) setRetry(value => value + 1);
           setPlaying(!playing);
         }}>{missingVoice ? tr('重试听书', 'Retry narration', '読み上げを再試行') : playing ? tr('暂停', 'Pause', '一時停止') : tr('继续', 'Resume', '再開')}</button>
+        <button aria-expanded={expanded} aria-controls={controlsId} onClick={() => setExpanded(value => !value)}>
+          {expanded ? tr('收起', 'Collapse', '閉じる') : tr('展开', 'Expand', '展開')}
+        </button>
+      </div>
+      <div id={controlsId} className="reader-controls listening-expanded" hidden={!expanded}>
+        {source.chapters && <button disabled={chapter <= 0} onClick={() => setIndex(source.chapters![chapter - 1])}>{tr('上一章', 'Previous chapter', '前の章')}</button>}
+        <button disabled={index <= 0} onClick={() => setIndex(index - 1)}>{tr('上一段', 'Previous passage', '前の段落')}</button>
         <button disabled={index + 1 >= source.parts.length} onClick={() => setIndex(index + 1)}>{tr('下一段', 'Next passage', '次の段落')}</button>
         {source.chapters && <button disabled={chapter + 1 >= source.chapters.length} onClick={() => setIndex(source.chapters![chapter + 1])}>{tr('下一章', 'Next chapter', '次の章')}</button>}
         <label>{tr('倍速', 'Speed', '再生速度')} <select value={rate} onChange={event => setRate(Number(event.target.value))}>
@@ -195,10 +225,22 @@ export function ListeningProvider({ children }: { children: ReactNode }) {
         </select></label>
         <label>{tr('播放位置', 'Playback position', '再生位置')} <input type="range" min={0} max={source.parts.length - 1} value={index}
           onChange={event => setIndex(Number(event.target.value))} /></label>
-        <output>{index + 1} / {source.parts.length}</output>
-        <button onClick={() => { request.current++; setPlaying(false); setSource(undefined); }}>{tr('停止', 'Stop', tr('停止', 'Stop', '停止'))}</button>
+        <button onClick={() => { request.current++; setPlaying(false); setExpanded(false); setSource(undefined); }}>{tr('停止', 'Stop', '停止')}</button>
       </div>
-      {missingVoice && <>
+      {missingVoice === 'ja' && <>
+        <p role="alert">{tr(
+          'Windows 缺少日语语音。可以安装 SeaReader 自带的离线语音包，约需 110 MB 磁盘空间。安装完成后会继续听书。',
+          'Windows is missing a Japanese voice. Install the included SeaReader offline voice (about 110 MB of disk space) to continue narration.',
+          'Windows に日本語の音声がありません。SeaReader 同梱のオフライン音声（約 110 MB の空き容量が必要）をインストールすると読み上げが続きます。'
+        )}</p>
+        <button disabled={installingVoice} onClick={() => { void installJapaneseVoice(); }}>
+          {tr('安装日语离线语音', 'Install Japanese offline voice', '日本語のオフライン音声をインストール')}
+        </button>
+        {installingVoice && <p role="status">{tr(
+          '正在安装日语语音…', 'Installing the Japanese voice…', '日本語音声をインストールしています…'
+        )}</p>}
+      </>}
+      {missingVoice && missingVoice !== 'ja' && <>
         <p role="alert">{tr(
           'Windows 缺少当前听书语言的本地语音。请在对应语言的「语言选项」中安装「语音」，然后重试听书。',
           'Windows is missing a local voice for the narration language. Install Speech in that language’s Language options, then retry narration.',

@@ -1,0 +1,4 @@
+voice-assets/*.deb binary
+voice-assets/*.tgz binary
+voice-assets/*.htsvoice binary
+voice-assets/voice-license.txt -text
