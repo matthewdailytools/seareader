@@ -1,0 +1,27 @@
+SeaReader offline OCR
+
+The Windows x64 Tesseract 5.5.4 and Leptonica 1.87.0 binaries are from the
+TesseractOCR distribution by Kees van Spelde and contributors, revision
+39c3f1a94392f1aa436c0db9be46a11f4d9b53d5.
+https://github.com/Sicos1977/TesseractOCR/tree/39c3f1a94392f1aa436c0db9be46a11f4d9b53d5/TesseractOCR
+
+tesseract55.dll SHA-256
+b1acb4e977884e7c4593ff25a8bf873b644d154e9ce1d3734525e3679a37832c
+leptonica-1.87.0.dll SHA-256
+0016d1f720962f703f036b5c216f02675e5163d2c055278ad6adbcfb0ca653eb
+
+The English, Simplified Chinese, and Japanese traineddata files are the
+4.0.0_best_int artifacts from @tesseract.js-data/eng, chi_sim, and jpn 1.0.0.
+https://github.com/naptha/tessdata
+https://github.com/tesseract-ocr/tessdata_best
+
+eng.traineddata.gz SHA-256
+45b4cb346724ac1774f1c36f42f182b887bcdb28ebe63e6fff90ac41f3fcff91
+chi_sim.traineddata.gz SHA-256
+b8a23f10c7de500891eb458a8adc9cc58ab7f242f08b7d149f5e9aea4ad5db7c
+jpn.traineddata.gz SHA-256
+2b63ebfbf1484de4a08ce53b29ef98a1c17658a93cbd38acb665d7d316d0be88
+
+Leptonica includes image codecs and compression libraries whose license
+notices accompany the engine. This software is based in part on the work
+of the Independent JPEG Group.

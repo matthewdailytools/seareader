@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -53,7 +53,7 @@ export async function prepareModel(cacheDir, model, install) {
     if (await validFile(target, expected)) return;
     if (!install) throw new Error('Offline model file missing or corrupt in cache');
     await mkdir(dirname(target), { recursive: true });
-    const temporary = target + '.part';
+    const temporary = target + '.' + process.pid + '.' + randomUUID() + '.part';
     try {
       let latestError;
       for (const host of ['https://huggingface.co', 'https://hf-mirror.com']) {

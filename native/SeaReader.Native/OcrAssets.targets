@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <SeaReaderOcrAssets>$(MSBuildThisFileDirectory)OcrAssets\</SeaReaderOcrAssets>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="$(SeaReaderOcrAssets)**\*" />
+    <None Include="$(SeaReaderOcrAssets)tessdata\*.traineddata.gz"
+          TargetPath="ocr-models\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(SeaReaderOcrAssets)win-x64\*.dll"
+          TargetPath="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(SeaReaderOcrAssets)licenses\*"
+          TargetPath="ocr-licenses\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

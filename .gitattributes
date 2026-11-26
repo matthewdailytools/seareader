@@ -2,3 +2,8 @@ voice-assets/*.deb binary
 voice-assets/*.tgz binary
 voice-assets/*.htsvoice binary
 voice-assets/voice-license.txt -text
+native/SeaReader.Native/OcrAssets/tessdata/jpn.traineddata.gz filter=lfs diff=lfs merge=lfs -text
+native/SeaReader.Native/OcrAssets/win-x64/leptonica-1.87.0.dll filter=lfs diff=lfs merge=lfs -text
+native/SeaReader.Native/OcrAssets/win-x64/tesseract55.dll filter=lfs diff=lfs merge=lfs -text
+native/SeaReader.Native/OcrAssets/tessdata/chi_sim.traineddata.gz filter=lfs diff=lfs merge=lfs -text
+native/SeaReader.Native/OcrAssets/tessdata/eng.traineddata.gz filter=lfs diff=lfs merge=lfs -text

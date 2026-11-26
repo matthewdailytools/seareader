@@ -1,0 +1,163 @@
+<Window x:Class="SeaReader.Native.SubscriptionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="订阅与下载" Width="824" Height="580" MinWidth="540" MinHeight="430"
+        WindowStartupLocation="CenterOwner" Background="#FFFDF8">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Margin" Value="0,0,7,6" />
+            <Setter Property="MinHeight" Value="28" />
+        </Style>
+    </Window.Resources>
+    <TabControl x:Name="Sections" Margin="14" Padding="12" Background="#FFFDF8">
+        <TabItem Header="订阅">
+            <Grid Margin="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <DockPanel x:Name="FeedForm" Margin="0,0,0,8">
+                    <Button DockPanel.Dock="Right" Click="OnSubscribe">订阅</Button>
+                    <Label DockPanel.Dock="Left" Target="{Binding ElementName=FeedAddress}">RSS / OPDS 地址</Label>
+                    <TextBox x:Name="FeedAddress" Margin="0,0,8,6" Padding="5" MaxLength="4096"
+                             KeyDown="OnFeedAddressKeyDown" />
+                </DockPanel>
+                <Grid Grid.Row="1" x:Name="FeedBrowse">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="194" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Margin="0,0,12,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Label Target="{Binding ElementName=FeedList}" Padding="0,0,0,6">已订阅</Label>
+                        <ListBox x:Name="FeedList" Grid.Row="1" SelectionChanged="OnFeedSelected"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Title}" ToolTip="{Binding Url}" TextTrimming="CharacterEllipsis" />
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <WrapPanel Grid.Row="2" Margin="0,8,0,0">
+                            <Button x:Name="RefreshFeedButton" Click="OnRefreshFeed">刷新</Button>
+                            <Button x:Name="RefreshAllButton" Click="OnRefreshAll">刷新全部</Button>
+                            <Button x:Name="RemoveFeedButton" Click="OnRemoveFeed">取消订阅</Button>
+                        </WrapPanel>
+                    </Grid>
+                    <Grid Grid.Column="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock x:Name="CatalogTitle" Text="书源目录" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                   Margin="0,2,0,6" />
+                        <WrapPanel Grid.Row="1" Margin="0,0,0,3">
+                            <Button x:Name="BackButton" Click="OnBack">返回上一级</Button>
+                            <Button x:Name="NextButton" Click="OnNext">下一页</Button>
+                        </WrapPanel>
+                        <ListBox x:Name="CatalogList" Grid.Row="2" AutomationProperties.Name="书源目录"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.VirtualizationMode="Recycling">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="4,5">
+                                        <TextBlock Text="{Binding Title}" TextWrapping="Wrap" Margin="0,0,0,5" />
+                                        <ItemsControl ItemsSource="{Binding Links}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <WrapPanel>
+                                                        <Button Content="{Binding Display}" ToolTip="{Binding Url}" Tag="{Binding}" Click="OnFeedLink" />
+                                                        <WrapPanel>
+                                                            <WrapPanel.Style>
+                                                                <Style TargetType="WrapPanel">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding Action}" Value="download">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </WrapPanel.Style>
+                                                            <Button Tag="{Binding}" Click="OnFeedPreview">下载并预览</Button>
+                                                            <Button Tag="{Binding}" Click="OnFeedImport">下载并加入书库</Button>
+                                                        </WrapPanel>
+                                                    </WrapPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Grid>
+                <TextBlock x:Name="FeedStatus" Grid.Row="2" Margin="0,8,0,0" TextWrapping="Wrap"
+                           AutomationProperties.LiveSetting="Polite" />
+            </Grid>
+        </TabItem>
+        <TabItem x:Name="DownloadsTab" Header="下载">
+            <Grid Margin="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <DockPanel x:Name="DownloadForm" Margin="0,0,0,5">
+                    <Button DockPanel.Dock="Right" Click="OnAddDownload">加入下载</Button>
+                    <ComboBox x:Name="DownloadFormat" DockPanel.Dock="Right" SelectedValuePath="Tag" SelectedIndex="0"
+                              AutomationProperties.Name="下载格式" Margin="0,0,7,6" Padding="5,3">
+                        <ComboBoxItem>自动格式</ComboBoxItem>
+                        <ComboBoxItem Tag="epub">EPUB</ComboBoxItem>
+                        <ComboBoxItem Tag="pdf">PDF</ComboBoxItem>
+                        <ComboBoxItem Tag="txt">TXT</ComboBoxItem>
+                        <ComboBoxItem Tag="fb2">FB2</ComboBoxItem>
+                        <ComboBoxItem Tag="html">HTML</ComboBoxItem>
+                        <ComboBoxItem Tag="docx">DOCX</ComboBoxItem>
+                    </ComboBox>
+                    <Label DockPanel.Dock="Left" Target="{Binding ElementName=DownloadAddress}">文件地址</Label>
+                    <TextBox x:Name="DownloadAddress" Margin="0,0,8,6" Padding="5" MaxLength="4096"
+                             KeyDown="OnDownloadAddressKeyDown" />
+                </DockPanel>
+                <CheckBox x:Name="WifiOnly" Grid.Row="1" Content="仅通过 Wi-Fi 下载" Margin="0,0,0,10"
+                          Click="OnNetworkChanged" />
+                <ListBox x:Name="DownloadList" Grid.Row="2" SelectionChanged="OnDownloadSelected"
+                         AutomationProperties.Name="下载队列" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="4,5" ToolTip="{Binding Url}">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding StatusText}" />
+                                <TextBlock Text="{Binding Error}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <WrapPanel Grid.Row="3" Margin="0,10,0,0">
+                    <Button x:Name="PreviewButton" Click="OnPreviewDownload">临时阅读</Button>
+                    <Button x:Name="ImportButton" Click="OnImportDownload">加入书库</Button>
+                    <Button x:Name="OpenButton" Click="OnOpenDownload">加入书库并打开</Button>
+                    <Button x:Name="CancelButton" Click="OnCancelDownload">取消下载</Button>
+                    <Button x:Name="RetryButton" Click="OnRetryDownload">重试</Button>
+                    <Button x:Name="RemoveButton" Click="OnRemoveDownload">移除</Button>
+                    <Button x:Name="ClearButton" Click="OnClearDownloads">清除已完成</Button>
+                </WrapPanel>
+                <TextBlock x:Name="DownloadStatus" Grid.Row="4" Margin="0,2,0,0" TextWrapping="Wrap"
+                           AutomationProperties.LiveSetting="Polite" />
+            </Grid>
+        </TabItem>
+    </TabControl>
+</Window>

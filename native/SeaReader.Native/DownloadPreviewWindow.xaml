@@ -1,0 +1,28 @@
+<Window x:Class="SeaReader.Native.DownloadPreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="780" Height="660" MinWidth="410" MinHeight="310"
+        WindowStartupLocation="CenterOwner" Background="#FFFDF8">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <DockPanel LastChildFill="True" Margin="0,0,0,8">
+            <Button x:Name="ImportButton" DockPanel.Dock="Right" Padding="10,4" Click="OnImport">加入书库</Button>
+            <Button x:Name="PreviousButton" DockPanel.Dock="Left" Padding="10,4" Margin="0,0,7,0" Click="OnPrevious">上一屏</Button>
+            <Button x:Name="NextButton" DockPanel.Dock="Left" Padding="10,4" Margin="0,0,7,0" Click="OnNext">下一屏</Button>
+            <TextBlock x:Name="Position" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                       Margin="4,0,8,0" AutomationProperties.LiveSetting="Polite" />
+        </DockPanel>
+        <TextBox x:Name="PreviewText" Grid.Row="1" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                 Background="#FFFDF8" BorderBrush="#D9D3C7" Padding="14" FontSize="16"
+                 AutomationProperties.Name="预览正文" Visibility="Collapsed" />
+        <ScrollViewer x:Name="PdfView" Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+            <Image x:Name="PdfImage" Stretch="Uniform" MaxWidth="880" VerticalAlignment="Top" HorizontalAlignment="Center"
+                   AutomationProperties.Name="PDF 预览页面" />
+        </ScrollViewer>
+        <TextBlock x:Name="Status" Grid.Row="2" Margin="0,8,0,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+    </Grid>
+</Window>
