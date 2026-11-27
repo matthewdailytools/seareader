@@ -11,7 +11,7 @@
         </Style>
     </Window.Resources>
     <TabControl x:Name="Sections" Margin="14" Padding="12" Background="#FFFDF8">
-        <TabItem Header="订阅">
+        <TabItem x:Name="SubscriptionsTab" Header="订阅">
             <Grid Margin="10">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />

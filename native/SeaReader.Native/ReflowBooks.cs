@@ -129,6 +129,16 @@ internal static class ReflowBooks
         CheckSize(stream.Length);
         var bytes = new byte[checked((int)stream.Length)];
         stream.ReadExactly(bytes);
+        var document = ParseHtml(bytes, ct);
+        var title = document.DocumentNode.Descendants().FirstOrDefault(node => HtmlName(node) == "title")?.InnerText;
+        var flow = new ChapterFlow(Compact(WebUtility.HtmlDecode(title)));
+        var body = document.DocumentNode.Descendants().FirstOrDefault(node => HtmlName(node) == "body");
+        AppendHtml(body ?? document.DocumentNode, flow, ct);
+        return flow.Build();
+    }
+
+    internal static HtmlDocument ParseHtml(byte[] bytes, CancellationToken ct)
+    {
         ct.ThrowIfCancellationRequested();
         var document = new HtmlDocument
         {
@@ -137,13 +147,16 @@ internal static class ReflowBooks
             OptionUseIdAttribute = false,
             OptionReadEncoding = false
         };
-        try { document.LoadHtml(DecodeMarkup(bytes)); }
-        catch (InvalidProgramException ex) { throw new InvalidDataException("HTML 的嵌套层数过多。", ex); }
-        var title = document.DocumentNode.Descendants().FirstOrDefault(node => HtmlName(node) == "title")?.InnerText;
-        var flow = new ChapterFlow(Compact(WebUtility.HtmlDecode(title)));
-        var body = document.DocumentNode.Descendants().FirstOrDefault(node => HtmlName(node) == "body");
-        AppendHtml(body ?? document.DocumentNode, flow, ct);
-        return flow.Build();
+        var source = DecodeMarkup(bytes);
+        ct.ThrowIfCancellationRequested();
+        try { document.LoadHtml(source); }
+        // HtmlAgilityPack can throw a plain Exception when its configured depth limit is exceeded.
+        catch (Exception error) when (error.GetType() == typeof(Exception) || error is InvalidProgramException)
+        {
+            throw new InvalidDataException("HTML 的嵌套层数过多。", error);
+        }
+        ct.ThrowIfCancellationRequested();
+        return document;
     }
 
     private static string DecodeMarkup(byte[] data)

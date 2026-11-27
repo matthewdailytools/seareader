@@ -1,0 +1,165 @@
+<Window x:Class="SeaReader.Native.ReadingGoalsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="阅读目标" Width="528" Height="644" MinWidth="345" MinHeight="320"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource LibraryCanvas}" Foreground="{DynamicResource LibraryInk}"
+        FontSize="14" UseLayoutRounding="True">
+    <Window.Resources>
+        <Style x:Key="GoalsSection" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource LibraryPaper}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LibraryRule}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="16,13"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style x:Key="SectionHeading" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="AutomationProperties.HeadingLevel" Value="Level1"/>
+        </Style>
+        <Style x:Key="GoalProgress" TargetType="ProgressBar">
+            <Setter Property="Maximum" Value="1"/>
+            <Setter Property="Height" Value="6"/>
+            <Setter Property="Background" Value="{DynamicResource LibrarySelection}"/>
+            <Setter Property="Foreground" Value="{DynamicResource LibraryAccent}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid x:Name="PART_Track" Background="Transparent" SnapsToDevicePixels="True">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="3"/>
+                            <Border x:Name="PART_Indicator" HorizontalAlignment="Left"
+                                    Background="{TemplateBinding Foreground}" CornerRadius="3"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="GoalNumberInput" TargetType="TextBox">
+            <Setter Property="Width" Value="64"/>
+            <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="{DynamicResource LibraryCanvas}"/>
+            <Setter Property="Foreground" Value="{DynamicResource LibraryInk}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LibraryRule}"/>
+            <Setter Property="SelectionBrush" Value="{DynamicResource LibraryAccent}"/>
+        </Style>
+        <Style x:Key="GoalOption" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource LibraryInk}"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="MinHeight" Value="28"/>
+        </Style>
+        <Style x:Key="GoalButton" TargetType="Button">
+            <Setter Property="MinWidth" Value="78"/>
+            <Setter Property="MinHeight" Value="34"/>
+            <Setter Property="Padding" Value="12,4"/>
+            <Setter Property="Background" Value="{DynamicResource LibraryPaper}"/>
+            <Setter Property="Foreground" Value="{DynamicResource LibraryInk}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LibraryRule}"/>
+        </Style>
+    </Window.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+            <StackPanel Margin="20,18,20,6">
+                <Border Style="{StaticResource GoalsSection}">
+                    <StackPanel>
+                        <TextBlock Text="今日阅读" Style="{StaticResource SectionHeading}"/>
+                        <TextBlock x:Name="TodayReading" FontSize="24" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" Margin="0,4,0,10"/>
+                        <ProgressBar x:Name="TodayProgress" Style="{StaticResource GoalProgress}"
+                                     AutomationProperties.Name="今日阅读目标完成比例"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource GoalsSection}">
+                    <StackPanel>
+                        <TextBlock Text="最近七天" Style="{StaticResource SectionHeading}"/>
+                        <ItemsControl x:Name="WeekDays" Margin="0,9,0,9">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="7"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel HorizontalAlignment="Stretch" ToolTip="{Binding Description}">
+                                        <Grid Height="35" Width="11" HorizontalAlignment="Center" Margin="0,0,0,3">
+                                            <Border Background="{DynamicResource LibrarySelection}" CornerRadius="3"/>
+                                            <Border Background="{DynamicResource LibraryAccent}" CornerRadius="3"
+                                                    Height="{Binding BarHeight}" VerticalAlignment="Bottom"/>
+                                        </Grid>
+                                        <TextBlock Text="{Binding Label}" FontSize="12" HorizontalAlignment="Center"
+                                                   AutomationProperties.Name="{Binding Description}"/>
+                                        <TextBlock Text="{Binding Summary}" FontSize="11" HorizontalAlignment="Center"
+                                                   Foreground="{DynamicResource LibraryQuiet}"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock x:Name="StreakReading" TextWrapping="Wrap" Foreground="{DynamicResource LibraryQuiet}"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource GoalsSection}">
+                    <StackPanel>
+                        <TextBlock Text="今年读完" Style="{StaticResource SectionHeading}"/>
+                        <TextBlock x:Name="AnnualReading" FontSize="20" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" Margin="0,4,0,10"/>
+                        <ProgressBar x:Name="AnnualProgress" Style="{StaticResource GoalProgress}"
+                                     AutomationProperties.Name="年度读完目标完成比例"/>
+                        <TextBlock Text="按升级后标为「已读完」的日期统计，关闭阅读计时仍可记录。"
+                                   Foreground="{DynamicResource LibraryQuiet}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource GoalsSection}">
+                    <StackPanel>
+                        <CheckBox x:Name="EnableReadingGoals" Content="记录阅读时间" Style="{StaticResource GoalOption}"/>
+                        <TextBlock Text="启用后开始累计本机阅读时间。离开阅读窗口、最小化或连续 5 分钟未操作时暂停计时。"
+                                   Foreground="{DynamicResource LibraryQuiet}" TextWrapping="Wrap" Margin="0,3,0,8"/>
+                        <Expander x:Name="GoalsSettingsExpander" Header="目标设置" Foreground="{DynamicResource LibraryInk}">
+                            <StackPanel Margin="0,6,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Label x:Name="DailyMinutesLabel" Content="每日目标（分钟）"
+                                           Target="{Binding ElementName=DailyMinutesInput}" Padding="0,0,8,0"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource LibraryInk}"/>
+                                    <TextBox x:Name="DailyMinutesInput" Grid.Column="1" Style="{StaticResource GoalNumberInput}"
+                                             AutomationProperties.LabeledBy="{Binding ElementName=DailyMinutesLabel}"/>
+                                    <Label x:Name="AnnualBooksLabel" Content="年度目标（本）" Target="{Binding ElementName=AnnualBooksInput}"
+                                           Grid.Row="1" Padding="0,6,8,0" VerticalAlignment="Center" Foreground="{DynamicResource LibraryInk}"/>
+                                    <TextBox x:Name="AnnualBooksInput" Grid.Row="1" Grid.Column="1" Margin="0,6,0,0"
+                                             Style="{StaticResource GoalNumberInput}"
+                                             AutomationProperties.LabeledBy="{Binding ElementName=AnnualBooksLabel}"/>
+                                </Grid>
+                                <CheckBox x:Name="IncludePdfReading" Content="将 PDF 纳入阅读计时" Margin="0,6,0,0"
+                                          Style="{StaticResource GoalOption}"/>
+                                <TextBlock x:Name="SettingsStatus" Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed"
+                                           AutomationProperties.LiveSetting="Polite"/>
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+        <Border Grid.Row="1" Background="{DynamicResource LibraryCanvas}" BorderBrush="{DynamicResource LibraryRule}"
+                BorderThickness="0,1,0,0" Padding="20,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CancelReadingGoalsButton" Style="{StaticResource GoalButton}" Content="取消" IsCancel="True"/>
+                <Button x:Name="SaveReadingGoalsButton" Style="{StaticResource GoalButton}" Content="保存" IsDefault="True" Margin="8,0,0,0"
+                        Background="{DynamicResource LibraryAccent}" BorderBrush="{DynamicResource LibraryAccent}"
+                        Foreground="{DynamicResource LibraryOnAccent}" Click="OnSave"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

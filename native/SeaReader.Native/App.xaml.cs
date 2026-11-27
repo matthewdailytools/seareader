@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace SeaReader.Native;
 
@@ -36,11 +37,11 @@ public partial class App : Application
 
             var store = new LibraryStore(data);
             await store.InitializeAsync();
-            var window = new MainWindow(store, files);
-            MainWindow = window;
-            ShutdownMode = ShutdownMode.OnMainWindowClose;
-            window.Show();
-            _ = ReceiveFilesAsync(channel, window, closing.Token);
+            var windows = new ReaderWindowManager(store);
+            ShutdownMode = ShutdownMode.OnLastWindowClose;
+            var library = windows.ShowLibrary();
+            _ = ReceiveFilesAsync(channel, windows, Dispatcher, closing.Token);
+            if (files.Length > 0) await library.OpenFilesAsync(files);
         }
         catch (Exception error)
         {
@@ -49,7 +50,8 @@ public partial class App : Application
         }
     }
 
-    private static async Task ReceiveFilesAsync(string channel, MainWindow window, CancellationToken token)
+    private static async Task ReceiveFilesAsync(string channel, ReaderWindowManager windows, Dispatcher dispatcher,
+        CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
@@ -63,12 +65,11 @@ public partial class App : Application
                 var files = await JsonSerializer.DeserializeAsync<string[]>(server, cancellationToken: deadline.Token)
                     .ConfigureAwait(false);
                 if (files is null) continue;
-                await window.Dispatcher.InvokeAsync(async () =>
+                await dispatcher.InvokeAsync(() =>
                 {
-                    if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
-                    window.Activate();
-                    await window.OpenFilesAsync(files.Where(Path.IsPathFullyQualified));
-                }).Task.Unwrap().ConfigureAwait(false);
+                    var library = windows.ShowLibrary();
+                    _ = library.OpenFilesAsync(files.Where(path => !string.IsNullOrEmpty(path) && Path.IsPathFullyQualified(path)));
+                }, DispatcherPriority.Normal, token).Task.ConfigureAwait(false);
             }
             catch (OperationCanceledException) { }
             catch (IOException) { }

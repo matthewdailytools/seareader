@@ -12,9 +12,17 @@
   <ItemGroup>
     <PackageReference Include="PdfPig" Version="0.1.16" />
     <PackageReference Include="HtmlAgilityPack" Version="1.13.1" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" GeneratePathProperty="true" />
+    <None Include="$(PkgMicrosoft_Web_WebView2)/LICENSE.txt" Link="Licenses/WebView2-LICENSE.txt"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(PkgMicrosoft_Web_WebView2)/NOTICE.txt" Link="Licenses/WebView2-NOTICE.txt"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- Upstream's tagged license also contains its embedded dependencies' notices. -->
     <None Update="Licenses/PdfPig.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="Licenses/HtmlAgilityPack.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Unmodified data and notices from https://github.com/hyphenation/tex-hyphen/tree/5684c0f51c0b81133db2efbe60a408b4155a3ff5 -->
+    <EmbeddedResource Include="Hyphenation/hyph-en-*.tex" LogicalName="SeaReader.Hyphenation.%(Filename)%(Extension)" />
+    <None Update="Hyphenation/hyph-en-*.tex" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <Import Project="OcrAssets.targets" />
 </Project>

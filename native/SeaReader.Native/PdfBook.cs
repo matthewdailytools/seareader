@@ -10,9 +10,11 @@ using Windows.Storage.Streams;
 
 namespace SeaReader.Native;
 
-public sealed class PdfBook
+public sealed class PdfBook : IPageBook
 {
     private const int MaximumPageDimension = 4096;
+    private const int ThumbnailWidth = 192;
+    private const int ThumbnailHeight = 256;
     private readonly PdfDocument _document;
     private readonly string _path;
     private readonly SemaphoreSlim _renderLock = new(1, 1);
@@ -48,7 +50,8 @@ public sealed class PdfBook
         return PdfTextPage.Read(source.GetPage(index + 1), ct);
     }, ct);
 
-    internal Task<IReadOnlyList<PdfTextHit>> SearchAsync(string query, IReadOnlyDictionary<int, string> recognized, int limit, CancellationToken ct) => Task.Run<IReadOnlyList<PdfTextHit>>(() =>
+    internal Task<IReadOnlyList<PdfTextHit>> SearchAsync(string query, IReadOnlyDictionary<int, string> recognized,
+        int limit, CancellationToken ct, Func<IReadOnlyList<PdfTextHit>, Task>? publish = null) => Task.Run<IReadOnlyList<PdfTextHit>>(async () =>
     {
         var results = new List<PdfTextHit>();
         using var source = UglyToad.PdfPig.PdfDocument.Open(_path);
@@ -57,14 +60,48 @@ public sealed class PdfBook
             ct.ThrowIfCancellationRequested();
             var page = PdfTextPage.Read(source.GetPage(index + 1), ct);
             var matches = PdfTextPage.Find(page.Text, query, index, limit - results.Count);
-            results.AddRange(matches);
             if (matches.Count == 0 && recognized.TryGetValue(index + 1, out var ocrText))
-                results.AddRange(PdfTextPage.Find(ocrText, query, index, limit - results.Count, fromOcr: true));
+                matches = PdfTextPage.Find(ocrText, query, index, limit - results.Count, fromOcr: true);
+            if (matches.Count == 0) continue;
+
+            ct.ThrowIfCancellationRequested();
+            results.AddRange(matches);
+            if (publish != null) await publish(matches).ConfigureAwait(false);
         }
+        ct.ThrowIfCancellationRequested();
         return results;
     }, ct);
 
-    public async Task<BitmapSource> RenderPageAsync(int zeroBasedIndex, int pixelWidth, CancellationToken ct = default)
+    public Task<BitmapSource> RenderPageAsync(int zeroBasedIndex, int pixelWidth, CancellationToken ct = default) =>
+        RenderAsync(zeroBasedIndex, Math.Min(pixelWidth, MaximumPageDimension), MaximumPageDimension, ct);
+
+    internal Task<BitmapSource> RenderThumbnailAsync(int zeroBasedIndex, CancellationToken ct = default) =>
+        RenderAsync(zeroBasedIndex, ThumbnailWidth, ThumbnailHeight, ct);
+
+    Task<System.Windows.Size> IPageBook.ReadPageSizeAsync(int index, CancellationToken token) => ReadPageSizeAsync(index, token);
+    Task<BitmapSource> IPageBook.RenderThumbnailAsync(int index, CancellationToken token) => RenderThumbnailAsync(index, token);
+    Task<PdfTextPage> IPageBook.ReadTextPageAsync(int index, CancellationToken token) => ReadTextPageAsync(index, token);
+    Task<IReadOnlyList<PdfTextHit>> IPageBook.SearchAsync(string query, IReadOnlyDictionary<int, string> recognized,
+        int limit, CancellationToken token, Func<IReadOnlyList<PdfTextHit>, Task>? publish) => SearchAsync(query, recognized, limit, token, publish);
+
+    internal async Task<System.Windows.Size> ReadPageSizeAsync(int index, CancellationToken token)
+    {
+        await _renderLock.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(() =>
+            {
+                using var page = _document.GetPage((uint)index);
+                var size = page.Size;
+                if (size.Width <= 0 || size.Height <= 0 || !double.IsFinite(size.Width) || !double.IsFinite(size.Height))
+                    throw new InvalidDataException("PDF 页面尺寸无效。");
+                return new System.Windows.Size(size.Width, size.Height);
+            }, token).ConfigureAwait(false);
+        }
+        finally { _renderLock.Release(); }
+    }
+
+    private async Task<BitmapSource> RenderAsync(int zeroBasedIndex, int pixelWidth, int pixelHeight, CancellationToken ct)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(zeroBasedIndex);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(zeroBasedIndex, PageCount);
@@ -78,10 +115,9 @@ public sealed class PdfBook
                 var size = page.Size;
                 if (size.Width <= 0 || size.Height <= 0 || !double.IsFinite(size.Width) || !double.IsFinite(size.Height))
                     throw new InvalidDataException("PDF 页面尺寸无效。");
-                var scale = Math.Min(Math.Min((double)pixelWidth, MaximumPageDimension) / size.Width,
-                    MaximumPageDimension / size.Height);
-                int width = (int)Math.Clamp(Math.Round(size.Width * scale), 1, MaximumPageDimension);
-                int height = (int)Math.Clamp(Math.Round(size.Height * scale), 1, MaximumPageDimension);
+                var scale = Math.Min(pixelWidth / size.Width, pixelHeight / size.Height);
+                int width = (int)Math.Clamp(Math.Round(size.Width * scale), 1, pixelWidth);
+                int height = (int)Math.Clamp(Math.Round(size.Height * scale), 1, pixelHeight);
                 // Windows.Data.Pdf takes DIPs and creates a physical bitmap at the system DPI.
                 double deviceScale = Math.Max(GetDpiForSystem(), 96u) / 96.0;
                 var options = new PdfPageRenderOptions
@@ -92,6 +128,7 @@ public sealed class PdfBook
 
                 using var rendered = new InMemoryRandomAccessStream();
                 await page.RenderToStreamAsync(rendered, options).AsTask(ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
                 rendered.Seek(0);
                 using var stream = rendered.AsStreamForRead();
                 var bitmap = new BitmapImage();

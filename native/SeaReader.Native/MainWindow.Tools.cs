@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media.Imaging;
 
 namespace SeaReader.Native;
@@ -8,8 +9,10 @@ public partial class MainWindow
 {
     private void OnSubscriptions(object sender, RoutedEventArgs e)
     {
+        bool downloads = sender is Button { Tag: "Downloads" };
         if (subscriptionsWindow != null)
         {
+            subscriptionsWindow.SelectSection(downloads);
             subscriptionsWindow.Activate();
             return;
         }
@@ -18,6 +21,7 @@ public partial class MainWindow
         {
             Owner = this
         };
+        window.SelectSection(downloads);
         subscriptionsWindow = window;
         window.Closed += (_, _) => subscriptionsWindow = null;
         window.Show();
@@ -28,8 +32,8 @@ public partial class MainWindow
         await ReloadLibraryAsync();
         var downloaded = books.FirstOrDefault(entry => entry.Id == id);
         if (downloaded == null) throw new InvalidOperationException("书库中找不到这本书。");
-        await OpenBookAsync(downloaded);
-        Activate();
+        await OpenLibraryBookAsync(downloaded);
+        if (readingWindows == null) Activate();
     }
 
     private void OnReaderTools(object sender, RoutedEventArgs e)
@@ -44,6 +48,32 @@ public partial class MainWindow
     private void OnReaderToolsClosed(object sender, RoutedEventArgs e)
     {
         if (hoverVisible) RestartHoverTimer();
+    }
+
+    private async void OnReaderToolsKeyDown(object sender, KeyEventArgs e)
+    {
+        var modifiers = Keyboard.Modifiers;
+        if (e.Key == Key.F11 && modifiers == ModifierKeys.None)
+        {
+            e.Handled = true;
+            if (!e.IsRepeat) await ToggleReaderFullScreenAsync();
+        }
+        else if (e.Key == Key.Escape)
+        {
+            if (e.IsRepeat) e.Handled = true;
+            else if (sender is ContextMenu menu && !menu.Items.OfType<MenuItem>().Any(item => item.IsSubmenuOpen))
+            {
+                e.Handled = true;
+                CloseReaderTools();
+            }
+        }
+        else HandleReaderNavigationShortcut(e, modifiers);
+    }
+
+    private void CloseReaderTools()
+    {
+        ReaderToolsButton.ContextMenu.IsOpen = false;
+        ReaderToolsButton.Focus();
     }
 
     private void OnTranslate(object sender, RoutedEventArgs e) => ShowTranslation(this, SelectedReaderText());

@@ -8,6 +8,11 @@ using System.Threading.Tasks;
 
 namespace SeaReader.Native;
 
+[Flags]
+internal enum TextEmphasis { None = 0, Bold = 1, Italic = 2 }
+
+internal readonly record struct TextStyleSpan(int Offset, int Length, TextEmphasis Emphasis);
+
 /// <summary>A decoded text document with stable UTF-16 offsets and indexable display rows.</summary>
 public sealed class TextDocument
 {
@@ -15,14 +20,22 @@ public sealed class TextDocument
     private const int ReadBufferSize = 64 * 1024;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
     private readonly int[] rowStarts;
+    private readonly TextStyleSpan[] styles;
+    private readonly EpubReference[] references;
+    private readonly EpubIllustration[] illustrations;
     private readonly Dictionary<int, int> continuedParagraphs = new();
 
     static TextDocument() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-    private TextDocument(string text, string encodingName, CancellationToken cancellationToken)
+    private TextDocument(string text, string encodingName, CancellationToken cancellationToken, TextStyleSpan[]? styles = null,
+        string? languageTag = null, EpubReference[]? references = null, EpubIllustration[]? illustrations = null)
     {
         Text = text;
         EncodingName = encodingName;
+        LanguageTag = languageTag;
+        this.styles = styles ?? [];
+        this.references = references ?? [];
+        this.illustrations = illustrations ?? [];
         var starts = new List<int>();
         var paragraphStart = 0;
         do
@@ -54,8 +67,67 @@ public sealed class TextDocument
     public string Text { get; }
     public string EncodingName { get; }
     public IReadOnlyList<TextLine> Lines { get; }
+    internal string? LanguageTag { get; }
+    internal bool HasReferences => references.Length != 0;
+    internal bool HasIllustrations => illustrations.Length != 0;
 
     public static TextDocument FromText(string value) => new(value, "utf-8", CancellationToken.None);
+
+    internal static TextDocument FromText(string value, TextStyleSpan[] styles, CancellationToken ct, string? languageTag = null,
+        EpubReference[]? references = null, EpubIllustration[]? illustrations = null) =>
+        new(value, "utf-8", ct, styles, languageTag, references, illustrations);
+
+    internal ReadOnlySpan<EpubIllustration> GetIllustrations(TextLine line)
+    {
+        if (!HasIllustrations) return [];
+        var row = FindLine(line.Offset);
+        var next = row + 1 < rowStarts.Length ? rowStarts[row + 1] : (long)Text.Length + 1;
+        var first = 0;
+        var end = illustrations.Length;
+        while (first < end)
+        {
+            var middle = first + (end - first) / 2;
+            if (illustrations[middle].Offset < line.Offset) first = middle + 1;
+            else end = middle;
+        }
+        while (end < illustrations.Length && illustrations[end].Offset < next) end++;
+        return illustrations.AsSpan(first, end - first);
+    }
+
+    internal ReadOnlySpan<EpubReference> GetReferences(TextLine line)
+    {
+        if (!HasReferences || line.Length == 0) return [];
+        var start = 0;
+        var end = references.Length;
+        while (start < end)
+        {
+            var middle = start + (end - start) / 2;
+            var reference = references[middle];
+            if (reference.Offset + reference.Length <= line.Offset) start = middle + 1;
+            else end = middle;
+        }
+        var lineEnd = line.Offset + line.Length;
+        while (end < references.Length && references[end].Offset < lineEnd) end++;
+        return references.AsSpan(start, end - start);
+    }
+
+    internal ReadOnlySpan<TextStyleSpan> GetTextStyles(TextLine line)
+    {
+        if (styles.Length == 0 || line.Length == 0) return [];
+        var start = 0;
+        var end = styles.Length;
+        // Runs are sorted by character offset and do not overlap.
+        while (start < end)
+        {
+            var middle = start + (end - start) / 2;
+            var span = styles[middle];
+            if (span.Offset + span.Length <= line.Offset) start = middle + 1;
+            else end = middle;
+        }
+        var lineEnd = line.Offset + line.Length;
+        while (end < styles.Length && styles[end].Offset < lineEnd) end++;
+        return styles.AsSpan(start, end - start);
+    }
 
     public static Task<TextDocument> LoadAsync(string path, string? encoding = null, CancellationToken cancellationToken = default)
     {

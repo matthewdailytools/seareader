@@ -4,12 +4,37 @@ using System.Security.Cryptography;
 
 namespace SeaReader.Native;
 
-public sealed record BookEntry(string Id, string Title, string Format, long? OpenedAt);
-public sealed record BookmarkEntry(long Id, string Position, long CreatedAt);
-public sealed record AnnotationEntry(long Id, string Position, string Quotation, string Note, long UpdatedAt);
-
-public sealed class LibraryStore(string directory)
+public sealed record BookEntry(string Id, string Title, string Format, long? OpenedAt)
 {
+    internal LibraryReadingState ReadingState { get; init; }
+    internal long ImportedAt { get; init; }
+    internal bool ContinueHidden { get; init; }
+    public BookLibraryDisplay Display { get; init; } = new(Title);
+    public string FormatLabel => Format.ToUpperInvariant();
+    public string ReadingLabel => ReadingState switch
+    {
+        LibraryReadingState.WantToRead => "想读",
+        LibraryReadingState.Finished => "已读完",
+        _ => OpenedAt.HasValue ? "在读" : "未开始"
+    };
+}
+public sealed record BookmarkEntry(long Id, string Position, long CreatedAt);
+public sealed record AnnotationEntry(long Id, string Position, string Quotation, string Note, long UpdatedAt)
+{
+    public AnnotationHighlight Highlight { get; init; }
+    public string LocationLabel { get; internal init; } = "";
+}
+
+public sealed partial class LibraryStore(string directory)
+{
+    private const string SelectBooks = """
+        SELECT id, title, format, opened_at, COALESCE(native_library_reading_states.state, 0), imported_at,
+               native_library_continue_hidden.book_id IS NOT NULL
+        FROM books
+        LEFT JOIN book_activity ON book_activity.book_id=books.id
+        LEFT JOIN native_library_reading_states ON native_library_reading_states.book_id=books.id
+        LEFT JOIN native_library_continue_hidden ON native_library_continue_hidden.book_id=books.id
+        """;
     internal string DataDirectory => directory;
     private string DatabasePath => Path.Combine(directory, "library.sqlite");
     private string BookDirectory => Path.Combine(directory, "books");
@@ -24,6 +49,8 @@ public sealed class LibraryStore(string directory)
                 id TEXT PRIMARY KEY, title TEXT NOT NULL, format TEXT NOT NULL, imported_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS book_activity (
                 book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE, opened_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS native_library_continue_hidden (
+                book_id TEXT PRIMARY KEY NOT NULL REFERENCES books(id) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS reading_positions (
                 book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE, position TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS native_epub_positions (
@@ -40,14 +67,26 @@ public sealed class LibraryStore(string directory)
                 book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
                 page INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (book_id, page));
             """);
+        InitializeOrganizationTables(database);
+        InitializeMetadataTable(database);
+        InitializeHighlightTable(database);
+        InitializeManualOrderTable(database);
+        InitializeReadingGoalsTables(database);
+        InitializeResumeTable(database);
     });
 
     public Task<IReadOnlyList<BookEntry>> ListAsync() => Query<IReadOnlyList<BookEntry>>(db =>
-        db.Read("""
-            SELECT id, title, format, opened_at FROM books
-            LEFT JOIN book_activity ON book_activity.book_id=books.id
-            ORDER BY opened_at DESC, imported_at DESC, id
-            """, Book));
+        db.Read(SelectBooks + " ORDER BY opened_at DESC, imported_at DESC, id", Book));
+
+    internal Task SetContinueHiddenAsync(string id, bool hidden) => Query(db =>
+    {
+        if (hidden)
+            db.Execute("""
+                INSERT INTO native_library_continue_hidden(book_id) VALUES (?)
+                ON CONFLICT(book_id) DO NOTHING
+                """, id);
+        else db.Execute("DELETE FROM native_library_continue_hidden WHERE book_id=?", id);
+    });
 
     public async Task<BookEntry> ImportAsync(string path, CancellationToken ct = default)
     {
@@ -55,6 +94,8 @@ public sealed class LibraryStore(string directory)
         try
         {
             var (id, format) = await CopyAndHashAsync(path, temporaryPath, ct).ConfigureAwait(false);
+            // A container entry identifies the format, but its package and spine must resolve before import.
+            if (format == "epub") await EpubDocument.LoadAsync(temporaryPath, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             string finalPath = BookPath(id);
             try { File.Move(temporaryPath, finalPath); }
@@ -66,10 +107,7 @@ public sealed class LibraryStore(string directory)
                     INSERT INTO books(id, title, format, imported_at) VALUES (?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET format=excluded.format WHERE books.format<>excluded.format
                     """, id, Path.GetFileNameWithoutExtension(path), format, Now());
-                return db.Read("""
-                    SELECT id, title, format, opened_at FROM books
-                    LEFT JOIN book_activity ON book_activity.book_id=books.id WHERE id=?
-                    """, Book, id).Single();
+                return db.Read(SelectBooks + " WHERE id=?", Book, id).Single();
             }).ConfigureAwait(false);
         }
         finally
@@ -97,21 +135,6 @@ public sealed class LibraryStore(string directory)
             LIMIT 1
             """, row => row.Text(0), id, id).FirstOrDefault());
 
-    public Task SavePositionAsync(string id, string position) => Query(db =>
-    {
-        bool epub = db.Read("SELECT format FROM books WHERE id=?", row => row.Text(0), id).Single() == "epub";
-        if (epub)
-            db.Execute("""
-                INSERT INTO native_epub_positions(book_id, position) VALUES (?, ?)
-                ON CONFLICT(book_id) DO UPDATE SET position=excluded.position
-                """, id, position);
-        else
-            db.Execute("""
-                INSERT INTO reading_positions(book_id, position) VALUES (?, ?)
-                ON CONFLICT(book_id) DO UPDATE SET position=excluded.position
-                """, id, position);
-    });
-
     public Task<IReadOnlyList<BookmarkEntry>> ListBookmarksAsync(string id) => Query<IReadOnlyList<BookmarkEntry>>(db =>
         db.Read("SELECT id, position, created_at FROM bookmarks WHERE book_id=? ORDER BY created_at DESC, id DESC",
             row => new BookmarkEntry(row.Integer(0), row.Text(1), row.Integer(2)), id));
@@ -119,14 +142,28 @@ public sealed class LibraryStore(string directory)
     public Task AddBookmarkAsync(string id, string position) => Query(db =>
         db.Execute("INSERT OR IGNORE INTO bookmarks(book_id, position, created_at) VALUES (?, ?, ?)", id, position, Now()));
 
+    internal Task<bool> ToggleBookmarkAsync(string id, string position) => Query(db =>
+    {
+        db.ExecuteScript("BEGIN IMMEDIATE;");
+        db.Execute("DELETE FROM bookmarks WHERE book_id=? AND position=?", id, position);
+        db.Execute("INSERT INTO bookmarks(book_id, position, created_at) SELECT ?, ?, ? WHERE changes()=0", id, position, Now());
+        var marked = db.Read("SELECT changes()", row => row.Integer(0)).Single() != 0;
+        db.ExecuteScript("COMMIT;");
+        return marked;
+    });
+
     public Task RemoveBookmarkAsync(string id, long bookmark) => Query(db =>
         db.Execute("DELETE FROM bookmarks WHERE book_id=? AND id=?", id, bookmark));
 
     public Task<IReadOnlyList<AnnotationEntry>> ListAnnotationsAsync(string id) => Query<IReadOnlyList<AnnotationEntry>>(db =>
         db.Read("""
-            SELECT id, position, quotation, note, updated_at FROM annotations
-            WHERE book_id=? ORDER BY updated_at DESC, id DESC
-            """, row => new AnnotationEntry(row.Integer(0), row.Text(1), row.Text(2), row.Text(3), row.Integer(4)), id));
+            SELECT annotations.id, position, quotation, note, updated_at, COALESCE(native_annotation_highlights.style, 0)
+            FROM annotations LEFT JOIN native_annotation_highlights ON native_annotation_highlights.annotation_id=annotations.id
+            WHERE book_id=? ORDER BY updated_at DESC, annotations.id DESC
+            """, row => new AnnotationEntry(row.Integer(0), row.Text(1), row.Text(2), row.Text(3), row.Integer(4))
+            {
+                Highlight = (AnnotationHighlight)row.Integer(5)
+            }, id));
 
     public Task SaveAnnotationAsync(string id, string position, string quotation, string note) => Query(db =>
         db.Execute("""
@@ -184,7 +221,12 @@ public sealed class LibraryStore(string directory)
 
     private Task Query(Action<LibraryDatabase> operation) => Query(db => { operation(db); return true; });
     private static long Now() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-    private static BookEntry Book(LibraryRow row) => new(row.Text(0), row.Text(1), row.Text(2), row.NullableInteger(3));
+    private static BookEntry Book(LibraryRow row) => new(row.Text(0), row.Text(1), row.Text(2), row.NullableInteger(3))
+    {
+        ReadingState = (LibraryReadingState)row.Integer(4),
+        ImportedAt = row.Integer(5),
+        ContinueHidden = row.Integer(6) != 0
+    };
 
     private string BookPath(string id)
     {

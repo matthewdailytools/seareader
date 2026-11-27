@@ -23,6 +23,13 @@ internal static partial class BookFormats
         format == "epub" ? await EpubDocument.LoadAsync(path, ct).ConfigureAwait(false)
                          : await ReflowBooks.LoadAsync(path, format, ct).ConfigureAwait(false);
 
+    internal static async Task<TextDocument> ReadChapterDocumentAsync(IChapterBook book, int index, CancellationToken ct)
+    {
+        if (book is EpubDocument epub) return await epub.ReadStyledChapterAsync(index, ct).ConfigureAwait(false);
+        var content = await book.ReadChapterAsync(index, ct).ConfigureAwait(false);
+        return await Task.Run(() => TextDocument.FromText(content, [], ct), ct).ConfigureAwait(false);
+    }
+
     internal static async Task<string> DetectFileAsync(string path, CancellationToken ct = default)
     {
         await using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 16384,

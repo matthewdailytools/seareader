@@ -8,6 +8,8 @@ namespace SeaReader.Native;
 
 public partial class SubscriptionWindow : Window
 {
+    internal void SelectSection(bool downloads) => Sections.SelectedItem = downloads ? DownloadsTab : SubscriptionsTab;
+
     private readonly SubscriptionCatalog subscriptions;
     private readonly DownloadQueue queue;
     private readonly Func<string, Task> openBook;

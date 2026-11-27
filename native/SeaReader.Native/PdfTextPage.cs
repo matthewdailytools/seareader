@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -155,11 +156,32 @@ internal sealed class PdfTextPage(string text, IReadOnlyList<PdfTextPage.Glyph> 
         return bounds;
     }
 
-    internal static IReadOnlyList<PdfTextHit> Find(string text, string query, int page, int limit, bool fromOcr = false)
+    internal static IReadOnlyList<PdfTextHit> Find(string text, string query, int page, int limit, bool fromOcr = false,
+        bool canonical = false)
     {
         var term = Regex.Replace(query.Trim(), @"\s+", " ");
         if (term.Length == 0) return [];
         var searchable = fromOcr ? Regex.Replace(text, @"\s+", " ") : text.Replace('\n', ' ');
+        List<(int Start, int End)>? sourceOffsets = null;
+        if (canonical)
+        {
+            term = term.Normalize();
+            if (!searchable.IsNormalized())
+            {
+                var normalized = new StringBuilder(searchable.Length);
+                sourceOffsets = new(searchable.Length);
+                var elements = StringInfo.GetTextElementEnumerator(searchable);
+                while (elements.MoveNext())
+                {
+                    var element = elements.GetTextElement();
+                    var value = element.Normalize();
+                    normalized.Append(value);
+                    for (int index = 0; index < value.Length; index++)
+                        sourceOffsets.Add((elements.ElementIndex, elements.ElementIndex + element.Length));
+                }
+                searchable = normalized.ToString();
+            }
+        }
         var results = new List<PdfTextHit>();
         var start = 0;
         while (start <= searchable.Length - term.Length && results.Count < limit)
@@ -169,7 +191,9 @@ internal sealed class PdfTextPage(string text, IReadOnlyList<PdfTextPage.Glyph> 
             var left = Math.Max(0, offset - 32);
             var right = Math.Min(searchable.Length, offset + Math.Min(term.Length, 75) + 45);
             var excerpt = $"{(left > 0 ? "…" : "")}{searchable[left..right].Trim()}{(right < searchable.Length ? "…" : "")}";
-            results.Add(new PdfTextHit(page, offset, term.Length, excerpt, fromOcr));
+            var sourceStart = sourceOffsets == null ? offset : sourceOffsets[offset].Start;
+            var sourceEnd = sourceOffsets == null ? offset + term.Length : sourceOffsets[offset + term.Length - 1].End;
+            results.Add(new PdfTextHit(page, sourceStart, sourceEnd - sourceStart, excerpt, fromOcr));
             start = offset + term.Length;
         }
         return results;
