@@ -1,0 +1,5 @@
+# Translation runtime notices
+
+- `ONNXRuntime-1.30.0` contains the notices from [Microsoft.ML.OnnxRuntime 1.30.0](https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.30.0), built from [ONNX Runtime commit f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7](https://github.com/microsoft/onnxruntime/commit/f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7). They cover the `onnxruntime-node` and `onnxruntime-common` packages pinned in `package-lock.json`.
+- `DirectML-1.15.4` contains the license and notices from [Microsoft.AI.DirectML 1.15.4](https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4). ONNX Runtime ships this version of `DirectML.dll`.
+- `DirectXShaderCompiler-1.8.2502.8` contains the library licenses from the [February 2025 DirectX Shader Compiler binary release](https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.8.2502) and the [third-party notices from its source revision](https://github.com/microsoft/DirectXShaderCompiler/blob/b4711839eb9a87da7c3436d9b212e0492359fbbd/ThirdPartyNotices.txt). ONNX Runtime ships compiler and validator DLLs from this version.

@@ -54,6 +54,7 @@ async function stage(name, parent, optional = false) {
 }
 
 await stage('@huggingface/transformers');
+await cp(new URL('./licenses/', import.meta.url), join(destination, 'licenses'), { recursive: true });
 await mkdir(join(destination, 'native', 'worker'), { recursive: true });
 await mkdir(join(destination, 'desktop'), { recursive: true });
 await cp(join(workspace, 'native', 'worker', 'translate.mjs'), join(destination, 'native', 'worker', 'translate.mjs'));
